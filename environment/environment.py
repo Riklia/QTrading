@@ -62,6 +62,8 @@ class CryptoTradingEnvironment(gym.Env):
         data.sort_values(by='date', inplace=True)
         self.prices = data['close'][-self.window:].reset_index(drop=True)
         self.dates = data['date'][-self.window:].reset_index(drop=True)
+        self.volume_btc = data['Volume BTC'][-self.window:].reset_index(drop=True)
+        self.volume_usd = data['Volume USD'][-self.window:].reset_index(drop=True)
 
         self.initial_balance = initial_balance
 
@@ -137,7 +139,8 @@ class CryptoTradingEnvironment(gym.Env):
         # the experiments on this topic needed. Example: we hold btc, it went down on the date X (seems like we lost
         # money), but went up on the date X + 6 month. So this state feature could help to specify that we want the best
         # yield close to some date.
-        return np.array([self.time_point / (self.window - 1), price, self.current_balance["USD"], self.current_balance["BTC"]])
+        return np.array([self.time_point / (self.window - 1), price, self.volume_btc[self.time_point],
+                         self.volume_usd[self.time_point], self.current_balance["USD"], self.current_balance["BTC"]])
         # return np.array([price, self.current_balance["USD"], self.current_balance["BTC"]])
 
     def _make_action_line(self) -> list[go.Scatter]:
