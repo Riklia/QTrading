@@ -176,7 +176,8 @@ class CryptoTradingEnvironment(gym.Env):
         for x, y, color in zip(x_coordinates, y_coordinates, marker_colors):
             scatter_traces.append(go.Scatter(x=[x], y=[y], mode='markers',
                                              marker=dict(color=color, size=10,
-                                                         symbol='triangle-down' if color == 'red' else 'triangle-up')))
+                                                         symbol='triangle-down' if color == 'red' else 'triangle-up'),
+                                             showlegend=False))
 
         return scatter_traces
 
