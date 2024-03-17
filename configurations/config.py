@@ -19,6 +19,8 @@ class LearningParameters:
 @dataclass(slots=True)
 class EnvParameters:
     data_path: str
+    max_time_point: int
+    # how many previous prices take into consideration
     window: int
     initial_balance: float
     record_balance: bool = False

@@ -56,15 +56,15 @@ class CryptoTradingEnvironment(gym.Env):
         super(CryptoTradingEnvironment, self).__init__()
 
         self.time_point = 0
-        self.window = configs.window
+        self.max_time_point = configs.max_time_point
         data = pd.read_csv(configs.data_path)
         data['date'] = pd.to_datetime(data['date'])
         data.sort_values(by='date', inplace=True)
-        self.prices = data['close'][-self.window:].reset_index(drop=True)
-        self.dates = data['date'][-self.window:].reset_index(drop=True)
-        self.volume_btc = data['Volume BTC'][-self.window:].reset_index(drop=True)
-        self.volume_usd = data['Volume USD'][-self.window:].reset_index(drop=True)
-
+        self.prices = data['close'][-self.max_time_point:].reset_index(drop=True)
+        self.dates = data['date'][-self.max_time_point:].reset_index(drop=True)
+        self.volume_btc = data['Volume BTC'][-self.max_time_point:].reset_index(drop=True)
+        self.volume_usd = data['Volume USD'][-self.max_time_point:].reset_index(drop=True)
+        self.window = configs.window
         self.initial_balance = initial_balance
 
         self.current_balance = copy.deepcopy(initial_balance)
@@ -94,7 +94,7 @@ class CryptoTradingEnvironment(gym.Env):
             self._buy(abs(percentage))
 
         terminated = (self.get_overall_current_balance() <= 0.05 * self.initial_overall_balance)
-        truncated = (self.time_point >= self.window - 1)
+        truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = self.get_overall_current_balance() - self.initial_overall_balance
         # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
@@ -132,15 +132,29 @@ class CryptoTradingEnvironment(gym.Env):
         price = self.prices[self.time_point]
         return self.current_balance["USD"] + self.current_balance["BTC"] * price
 
+    def _get_window_prices(self):
+        start = self.time_point - self.window
+        stop = self.time_point
+        result = []
+        if start < 0:
+            result.extend([0] * abs(start))
+            start = 0
+
+        result.extend(self.prices[start:stop])
+        return result
+
     def _get_observation(self):
         price = self.prices[self.time_point]
-        # there is an idea to take time_point / (window - 1) into consideration.
+
+        prices_in_window = self._get_window_prices()
+        # there is an idea to take time_point / (max_time_point - 1) into consideration.
         # It could make sense if the goal of the trading was "make me more money till date X". However,
         # the experiments on this topic needed. Example: we hold btc, it went down on the date X (seems like we lost
         # money), but went up on the date X + 6 month. So this state feature could help to specify that we want the best
         # yield close to some date.
-        return np.array([self.time_point / (self.window - 1), price, self.volume_btc[self.time_point],
-                         self.volume_usd[self.time_point], self.current_balance["USD"], self.current_balance["BTC"]])
+        return np.array(prices_in_window + [self.time_point / (self.max_time_point - 1), price,
+                                            self.volume_btc[self.time_point], self.volume_usd[self.time_point],
+                                            self.current_balance["USD"], self.current_balance["BTC"]])
         # return np.array([price, self.current_balance["USD"], self.current_balance["BTC"]])
 
     def _make_action_line(self) -> list[go.Scatter]:

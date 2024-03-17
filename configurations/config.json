@@ -15,7 +15,8 @@
   },
   "env_parameters": {
     "data_path": "data/BTC-Daily.csv",
-    "window": 365,
+    "max_time_point": 365,
+    "window": 10,
     "initial_balance": 50000,
     "action_step_size": 1
   }
