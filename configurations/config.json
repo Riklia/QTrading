@@ -1,0 +1,22 @@
+{
+  "model_dir": "models/daily_365_action_1",
+  "model_name": "daily_365_action_1",
+  "learning_parameters": {
+    "gamma": 0.97,
+    "eps_start": 0.9,
+    "eps_end": 0.05,
+    "eps_decay": 1000,
+    "tau": 0.005,
+    "lr": 3e-4,
+    "batch_size": 64,
+    "num_episodes": 15000,
+    "print_frequency": 10,
+    "render": true
+  },
+  "env_parameters": {
+    "data_path": "data/BTC-Daily.csv",
+    "window": 365,
+    "initial_balance": 50000,
+    "action_step_size": 1
+  }
+}
