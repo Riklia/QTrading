@@ -212,4 +212,4 @@ class CryptoTradingEnvironment(gym.Env):
                                 align="left"
                                 ))
         pyo.plot(fig, filename=f"{directory}/crypto_trading_environment.html", auto_open=False,
-                 include_plotlyjs=False)
+                 include_plotlyjs='cdn')
