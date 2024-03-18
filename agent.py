@@ -109,5 +109,5 @@ class Agent:
         torch.save(self.target_net.state_dict(), f"{directory}/{filename}_target.pth")
 
     def __del__(self):
-        self.save_plot(self.configs.model_dir, self.configs.model_name)
         self.save_model(self.configs.model_dir, self.configs.model_name)
+        self.save_plot(self.configs.model_dir, self.configs.model_name)
