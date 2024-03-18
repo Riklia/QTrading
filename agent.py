@@ -1,7 +1,7 @@
 import math
 import random
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn

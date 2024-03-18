@@ -1,6 +1,6 @@
 import json
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import torch
 from environment import CryptoTradingEnvironment, Balance
