@@ -72,8 +72,12 @@ class Agent:
             return torch.tensor([[random.randrange(self.n_actions)]], device=self.device, dtype=torch.long)
 
     def plot_durations(self, show_result=False):
-        plt.figure(1)
         final_balances = torch.tensor(self.episode_usd_final_balance, dtype=torch.float)
+
+        save_every = self.configs.learning_parameters.save_plot_every
+        episodes_so_far = len(final_balances)
+
+        plt.figure(1)
         if show_result:
             plt.title('Result')
         else:
@@ -83,11 +87,13 @@ class Agent:
         plt.ylabel('Final USD balance')
         plt.plot(final_balances.numpy())
         # Plot average of 100 last episodes
-        if len(final_balances) >= 100:
+        if episodes_so_far >= 100:
             means = final_balances.unfold(0, 100, 1).mean(1).view(-1)
             means = torch.cat((torch.zeros(99), means))
             plt.plot(means.numpy())
 
+        if save_every != 0 and episodes_so_far % save_every == 0:
+            plt.savefig(f"{self.configs.model_dir}/learning_plot.png")
         plt.pause(0.001)
 
     def save_plot(self, directory, filename):

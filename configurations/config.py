@@ -14,6 +14,7 @@ class LearningParameters:
     num_episodes: int = 10000
     print_frequency: int = 10
     render: bool = False,
+    save_plot_every: int = 0
 
 
 @dataclass(slots=True)

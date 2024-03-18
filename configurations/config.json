@@ -9,9 +9,10 @@
     "tau": 0.005,
     "lr": 3e-4,
     "batch_size": 64,
-    "num_episodes": 15000,
+    "num_episodes": 10000,
     "print_frequency": 10,
-    "render": true
+    "render": true,
+    "save_plot_every": 10
   },
   "env_parameters": {
     "data_path": "data/BTC-Daily.csv",
