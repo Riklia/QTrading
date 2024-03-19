@@ -97,11 +97,15 @@ class CryptoTradingEnvironment(gym.Env):
         truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = self.get_overall_current_balance() - self.initial_overall_balance
+        if overall_reward < 0:
+            overall_reward += overall_reward * self.time_point / self.max_time_point
         # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
         # with this coefficient in the future)
         usd_overall_reward = 0
         if terminated or truncated:
             usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"])
+            if usd_overall_reward < 0:
+                usd_overall_reward += usd_overall_reward * self.time_point / self.max_time_point
         # reward function
         reward = overall_reward + usd_overall_reward - 10 * self.initial_overall_balance * terminated
         if self.current_balance["USD"] > self.initial_balance["USD"]:
