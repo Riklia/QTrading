@@ -5,6 +5,7 @@ import copy
 import plotly.graph_objs as go
 import plotly.offline as pyo
 from enum import Enum
+from scipy.stats import entropy
 from environment.balance import Balance
 from configurations.config import EnvParameters
 
@@ -96,7 +97,7 @@ class CryptoTradingEnvironment(gym.Env):
         terminated = (self.get_overall_current_balance() <= 0.05 * self.initial_overall_balance)
         truncated = (self.time_point >= self.max_time_point - 1)
 
-        overall_reward = self.get_overall_current_balance() - self.initial_overall_balance
+        overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
         if overall_reward < 0:
             overall_reward += overall_reward * self.time_point / self.max_time_point
         # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
@@ -151,6 +152,7 @@ class CryptoTradingEnvironment(gym.Env):
         price = self.prices[self.time_point]
 
         prices_in_window = self._get_window_prices()
+        shannon_entropy = entropy(np.histogram(self.prices[:self.time_point], bins=100, density=True)[0])
         # there is an idea to take time_point / (max_time_point - 1) into consideration.
         # It could make sense if the goal of the trading was "make me more money till date X". However,
         # the experiments on this topic needed. Example: we hold btc, it went down on the date X (seems like we lost
@@ -158,7 +160,7 @@ class CryptoTradingEnvironment(gym.Env):
         # yield close to some date.
         return np.array(prices_in_window + [self.time_point / (self.max_time_point - 1), price,
                                             self.volume_btc[self.time_point], self.volume_usd[self.time_point],
-                                            self.current_balance["USD"], self.current_balance["BTC"]])
+                                            self.current_balance["USD"], self.current_balance["BTC"], shannon_entropy])
         # return np.array([price, self.current_balance["USD"], self.current_balance["BTC"]])
 
     def _make_action_line(self) -> list[go.Scatter]:
