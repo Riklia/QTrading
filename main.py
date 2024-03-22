@@ -40,7 +40,8 @@ def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agen
         agent.target_net.load_state_dict(target_net_state_dict)
 
         if done:
-            agent.episode_usd_final_balance.append(env.get_overall_current_balance())
+            # agent.episode_usd_final_balance.append(env.get_overall_current_balance())
+            agent.episode_usd_final_balance.append(reward)
             agent.plot_durations()
             break
 
