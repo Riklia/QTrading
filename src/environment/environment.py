@@ -6,7 +6,7 @@ import plotly.graph_objs as go
 import plotly.offline as pyo
 from enum import Enum
 from scipy.stats import entropy
-from environment.balance import Balance
+from src.environment.balance import Balance
 from configurations.config import EnvParameters
 
 

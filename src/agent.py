@@ -5,8 +5,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from src.model import QNetwork
-from src.replay_buffer import ReplayMemory, Transition
-from src.train_config import TrainConfig
+from replay_buffer import ReplayMemory, Transition
+from configurations.config import TrainConfig
+
+steps_done = 0
 
 
 class Agent:
@@ -16,13 +18,11 @@ class Agent:
         self.target_net = QNetwork(n_observations, n_actions).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=configs.learning_parameters.lr, amsgrad=True)
-        self.recurrent_cell = self.policy_net.init_recurrent_cell_states(1, self.device)
         self.n_observations = n_observations
         self.n_actions = n_actions
         self.configs = configs
         self.replay_memory = ReplayMemory(10000)
         self.episode_usd_final_balance = []
-        self.steps_done = 0
 
     def learn(self):
         batch_size = self.configs.learning_parameters.batch_size
@@ -37,24 +37,14 @@ class Agent:
                                       dtype=torch.bool)
         non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
         state_batch = torch.cat(batch.state)
-        hx_batch = torch.cat(batch.hx)
-        cx_batch = torch.cat(batch.cx)
-        recurrent_cell_batch = (hx_batch.unsqueeze(0), cx_batch.unsqueeze(0))
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
 
-        state_action_values, _ = self.policy_net(state_batch, recurrent_cell_batch, len(state_batch))
-        state_action_values = state_action_values.gather(1, action_batch)
-        next_state_values = torch.zeros(batch_size, device=self.device)
+        state_action_values = self.policy_net(state_batch).gather(1, action_batch)
 
-        target_hx_batch = hx_batch.clone()
-        target_cx_batch = cx_batch.clone()
-        target_hx_batch = target_hx_batch[non_final_mask]
-        target_cx_batch = target_cx_batch[non_final_mask]
-        target_recurrent_cell_batch = (target_hx_batch.unsqueeze(0), target_cx_batch.unsqueeze(0))
+        next_state_values = torch.zeros(batch_size, device=self.device)
         with torch.no_grad():
-            out, _ = self.target_net(non_final_next_states, target_recurrent_cell_batch, len(non_final_next_states))
-            next_state_values[non_final_mask] = out.max(1).values
+            next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1).values
         expected_state_action_values = (next_state_values * gamma) + reward_batch
 
         criterion = nn.SmoothL1Loss()
@@ -69,13 +59,13 @@ class Agent:
         eps_end = self.configs.learning_parameters.eps_end
         eps_start = self.configs.learning_parameters.eps_start
         eps_decay = self.configs.learning_parameters.eps_decay
+        global steps_done
         sample = random.random()
-        eps_threshold = eps_end + (eps_start - eps_end) * math.exp(-1. * self.steps_done / eps_decay)
-        self.steps_done += 1
+        eps_threshold = eps_end + (eps_start - eps_end) * math.exp(-1. * steps_done / eps_decay)
+        steps_done += 1
         if sample > eps_threshold:
             with torch.no_grad():
-                out, self.recurrent_cell = self.policy_net(state, self.recurrent_cell)
-                return out.max(1).indices.view(1, 1)
+                return self.policy_net(state).max(1).indices.view(1, 1)
         else:
             return torch.tensor([[random.randrange(self.n_actions)]], device=self.device, dtype=torch.long)
 
