@@ -5,7 +5,7 @@ import random
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
 
-class ReplayMemory(object):
+class ReplayMemory:
 
     def __init__(self, capacity):
         self.memory = deque([], maxlen=capacity)

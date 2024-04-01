@@ -1,12 +1,10 @@
 import math
 import random
-import matplotlib
-matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from model import QNetwork
+from src.model import QNetwork
 from replay_buffer import ReplayMemory, Transition
 from configurations.config import TrainConfig
 
