@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from src.model import QNetwork
-from replay_buffer import ReplayMemory, Transition
+from src.replay_buffer import ReplayMemory, Transition
 from configurations.config import TrainConfig
 
 steps_done = 0

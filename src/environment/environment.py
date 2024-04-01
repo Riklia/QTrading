@@ -71,12 +71,13 @@ class CryptoTradingEnvironment(gym.Env):
         self.current_balance = copy.deepcopy(initial_balance)
         self.initial_overall_balance = self.get_overall_current_balance()
 
-        self.TRANSACTION_FEE = 0.01
+        self.transaction_fee = configs.transaction_fee
         # action < 0 => buy, action > 0 => sell, action = 0 => hold
         # set step (0, 1) if you want to be able to sell/buy using some percentage of current balance
         self.action_space = RangeSpace(-1, 1, configs.action_step_size)
         # action_history used for render
         self.action_history = []
+        self.terminate_threshold = configs.terminate_threshold
 
     def reset(self):
         # Reset the environment to its initial state
@@ -94,19 +95,17 @@ class CryptoTradingEnvironment(gym.Env):
         elif action_type == MainActionTypes.BUY:
             self._buy(abs(percentage))
 
-        terminated = (self.get_overall_current_balance() <= 0.05 * self.initial_overall_balance)
+        terminated = (self.get_overall_current_balance() < self.terminate_threshold * self.initial_overall_balance)
         truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
-        if overall_reward < 0:
-            overall_reward += overall_reward * self.time_point / self.max_time_point
         # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
         # with this coefficient in the future)
         usd_overall_reward = 0
         if terminated or truncated:
             usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"]) / self.initial_balance["USD"]
             if usd_overall_reward < 0:
-                usd_overall_reward += usd_overall_reward * self.time_point / self.max_time_point
+                usd_overall_reward += usd_overall_reward * 0.001
         # reward function
         reward = overall_reward + usd_overall_reward - 10 * terminated
         if self.current_balance["USD"] > self.initial_balance["USD"]:
@@ -118,23 +117,32 @@ class CryptoTradingEnvironment(gym.Env):
         return self._get_observation(), reward, terminated, truncated, {}
 
     def _sell(self, sell_percentage: float):
-        price = self.prices[self.time_point]
+        price = self.get_current_price()
         if 0 <= sell_percentage <= 1:
             sell_proceeds = sell_percentage * self.current_balance['BTC'] * price
-            trading_fees = self.TRANSACTION_FEE * sell_proceeds
+            # todo: or do 2*trading_fees? on closing and on opening
+            trading_fees = self.transaction_fee * sell_proceeds
             self.current_balance.update_balance("USD", sell_proceeds - trading_fees)
             self.current_balance.update_balance("BTC", -sell_percentage * self.current_balance["BTC"])
 
     def _buy(self, buy_percentage: float):
-        price = self.prices[self.time_point]
+        price = self.get_current_price()
         if 0 <= buy_percentage <= 1:
             buy_proceeds = buy_percentage * self.current_balance['USD'] / price
-            trading_fees = self.TRANSACTION_FEE * buy_proceeds
+            # todo: or do 2*trading_fees? on closing and on opening
+            trading_fees = self.transaction_fee * buy_proceeds
             self.current_balance.update_balance("BTC", buy_proceeds - trading_fees)
             self.current_balance.update_balance("USD", -buy_percentage * self.current_balance["USD"])
 
+    def get_current_price(self):
+        # again: if decide extend to multiple currency - add corresponding logic
+        return self.prices[self.time_point]
+
+    def get_current_timestamp(self):
+        return self.dates[self.time_point]
+
     def get_overall_current_balance(self):
-        price = self.prices[self.time_point]
+        price = self.get_current_price()
         return self.current_balance["USD"] + self.current_balance["BTC"] * price
 
     def _get_window_prices(self):
@@ -149,19 +157,13 @@ class CryptoTradingEnvironment(gym.Env):
         return result
 
     def _get_observation(self):
-        price = self.prices[self.time_point]
+        price = self.get_current_price()
 
         prices_in_window = self._get_window_prices()
         shannon_entropy = entropy(np.histogram(self.prices[:self.time_point], bins=100, density=True)[0])
-        # there is an idea to take time_point / (max_time_point - 1) into consideration.
-        # It could make sense if the goal of the trading was "make me more money till date X". However,
-        # the experiments on this topic needed. Example: we hold btc, it went down on the date X (seems like we lost
-        # money), but went up on the date X + 6 month. So this state feature could help to specify that we want the best
-        # yield close to some date.
-        return np.array(prices_in_window + [self.time_point / (self.max_time_point - 1), price,
-                                            self.volume_btc[self.time_point], self.volume_usd[self.time_point],
+
+        return np.array(prices_in_window + [price, self.volume_btc[self.time_point], self.volume_usd[self.time_point],
                                             self.current_balance["USD"], self.current_balance["BTC"], shannon_entropy])
-        # return np.array([price, self.current_balance["USD"], self.current_balance["BTC"]])
 
     def _make_action_line(self) -> list[go.Scatter]:
         x_coordinates = []
@@ -188,7 +190,7 @@ class CryptoTradingEnvironment(gym.Env):
         return scatter_traces
 
     def render(self, directory):
-        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+2], y=self.prices[:self.time_point+2],
+        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+1], y=self.prices[:self.time_point+1],
                                      mode='lines',
                                      name='BTC Price')
 

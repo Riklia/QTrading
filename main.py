@@ -2,7 +2,7 @@ import json
 import matplotlib.pyplot as plt
 import torch
 from src.environment import CryptoTradingEnvironment, Balance
-from agent import Agent
+from src.agent import Agent
 from configurations.config import TrainConfig
 
 
@@ -63,7 +63,7 @@ def train(configs: TrainConfig, agent, env):
 
 
 def main():
-    with open(r"../configurations/config.json") as f:
+    with open(r"configurations/config.json") as f:
         config_data = json.load(f)
     configs = TrainConfig(**config_data)
     balance_log_path = None
