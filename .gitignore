@@ -162,5 +162,4 @@ cython_debug/
 # additional
 data
 models
-tests
 notes.txt

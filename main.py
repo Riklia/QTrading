@@ -1,9 +1,10 @@
 import json
 import matplotlib.pyplot as plt
 import torch
+
 from src.environment import CryptoTradingEnvironment, Balance
 from src.agent import Agent
-from configurations.config import TrainConfig
+from src.train_config import TrainConfig
 
 
 def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agent):
@@ -27,7 +28,8 @@ def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agen
         else:
             next_state = torch.tensor(observation, dtype=torch.float32, device=agent.device).unsqueeze(0)
 
-        agent.replay_memory.push(state, action, next_state, reward)
+        hx, cx = agent.recurrent_cell
+        agent.replay_memory.push(state, hx.squeeze(0), cx.squeeze(0), action, next_state, reward)
         state = next_state
         agent.learn()
 
@@ -38,8 +40,7 @@ def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agen
         agent.target_net.load_state_dict(target_net_state_dict)
 
         if done:
-            # agent.episode_usd_final_balance.append(env.get_overall_current_balance())
-            agent.episode_usd_final_balance.append(reward)
+            agent.episode_usd_final_balance.append(env.get_overall_current_balance())
             agent.plot_durations()
             break
 
