@@ -42,6 +42,9 @@ def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agen
         if done:
             agent.episode_usd_final_balance.append(env.get_overall_current_balance())
             agent.plot_durations()
+            agent.episode_rewards.append(reward)
+            agent.plot_durations(array_to_plot=agent.episode_rewards, plot_name="training_rewards.png",
+                                 y_label="Final reward")
             break
 
     return env.get_overall_current_balance() - env.initial_overall_balance

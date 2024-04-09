@@ -75,15 +75,17 @@ class CryptoTradingEnvironment(gym.Env):
         truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
+        time_penalty = 0
+        if overall_reward <= 0:
+            time_penalty = abs(0.001 * overall_reward) * self.time_point
         # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
         # with this coefficient in the future)
         usd_overall_reward = 0
         if terminated or truncated:
             usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"]) / self.initial_balance["USD"]
-            if usd_overall_reward < 0:
-                usd_overall_reward += usd_overall_reward * 0.001
+
         # reward function
-        reward = overall_reward + usd_overall_reward - 10 * terminated
+        reward = overall_reward + usd_overall_reward - 10 * terminated - time_penalty
         if self.current_balance["USD"] > self.initial_balance["USD"]:
             reward *= 3
 
@@ -181,7 +183,7 @@ class CryptoTradingEnvironment(gym.Env):
         return scatter_traces
 
     def render(self, directory):
-        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+1], y=self.prices[:self.time_point+1],
+        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+1], y=self.original_prices[:self.time_point+1],
                                      mode='lines',
                                      name='BTC Price')
 
@@ -191,7 +193,7 @@ class CryptoTradingEnvironment(gym.Env):
 
         data_to_plot = [trace_btc_price]
         if self.time_point + 1 < len(self.dates):
-            trace_current_time = go.Scatter(x=[self.dates[self.time_point+1]], y=[self.prices[self.time_point+1]],
+            trace_current_time = go.Scatter(x=[self.dates[self.time_point+1]], y=[self.original_prices[self.time_point+1]],
                                             mode='markers', name='Current Time Point', marker=dict(color='red', size=10))
 
             data_to_plot += [trace_current_time]

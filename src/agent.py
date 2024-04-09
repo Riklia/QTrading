@@ -22,6 +22,7 @@ class Agent:
         self.configs = configs
         self.replay_memory = ReplayMemory(10000)
         self.episode_usd_final_balance = []
+        self.episode_rewards = []
         self.steps_done = 0
 
     def learn(self):
@@ -79,29 +80,33 @@ class Agent:
         else:
             return torch.tensor([[random.randrange(self.n_actions)]], device=self.device, dtype=torch.long)
 
-    def plot_durations(self, show_result=False):
-        final_balances = torch.tensor(self.episode_usd_final_balance, dtype=torch.float)
+    def plot_durations(self, array_to_plot=None, plot_name: str = "learning_plot.png",
+                       y_label: str = "Final USD balance", show_result=False):
 
+        if array_to_plot is None:
+            array_to_plot = torch.tensor(self.episode_usd_final_balance, dtype=torch.float)
+        else:
+            array_to_plot = torch.tensor(array_to_plot, dtype=torch.float)
         save_every = self.configs.learning_parameters.save_plot_every
-        episodes_so_far = len(final_balances)
+        episodes_so_far = len(array_to_plot)
 
         plt.figure(1)
         if show_result:
-            plt.title('Result')
+            plt.title("Result")
         else:
             plt.clf()
-            plt.title('Training...')
-        plt.xlabel('Episode')
-        plt.ylabel('Final USD balance')
-        plt.plot(final_balances.numpy())
+            plt.title("Training...")
+        plt.xlabel("Episode")
+        plt.ylabel(y_label)
+        plt.plot(array_to_plot.numpy())
         # Plot average of 100 last episodes
         if episodes_so_far >= 100:
-            means = final_balances.unfold(0, 100, 1).mean(1).view(-1)
+            means = array_to_plot.unfold(0, 100, 1).mean(1).view(-1)
             means = torch.cat((torch.zeros(99), means))
             plt.plot(means.numpy())
 
         if save_every != 0 and episodes_so_far % save_every == 0:
-            plt.savefig(f"{self.configs.model_dir}/learning_plot.png")
+            plt.savefig(f"{self.configs.model_dir}/{plot_name}")
         plt.pause(0.001)
 
     def save_plot(self, directory, filename):
