@@ -1,11 +1,10 @@
 import json
-import matplotlib
-matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import torch
-from environment import CryptoTradingEnvironment, Balance
-from agent import Agent
-from configurations.config import TrainConfig
+
+from src.environment import CryptoTradingEnvironment, Balance
+from src.agent import Agent
+from src.train_config import TrainConfig
 
 
 def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agent):
@@ -29,7 +28,8 @@ def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agen
         else:
             next_state = torch.tensor(observation, dtype=torch.float32, device=agent.device).unsqueeze(0)
 
-        agent.replay_memory.push(state, action, next_state, reward)
+        hx, cx = agent.recurrent_cell
+        agent.replay_memory.push(state, hx.squeeze(0), cx.squeeze(0), action, next_state, reward)
         state = next_state
         agent.learn()
 

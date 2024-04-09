@@ -15,10 +15,12 @@
     "save_plot_every": 10
   },
   "env_parameters": {
-    "data_path": "data/BTC-Daily.csv",
-    "max_time_point": 365,
-    "window": 10,
+    "data_path": "data/funding_spread.csv",
+    "max_time_point": 8760,
+    "window": 168,
     "initial_balance": 50000,
-    "action_step_size": 1
-  }
+    "action_step_size": 1,
+    "terminate_threshold": 0.1
+  },
+  "overwrite": true
 }
