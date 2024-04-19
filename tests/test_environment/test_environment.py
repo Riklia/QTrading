@@ -7,8 +7,9 @@ from src.environment.env_parameters import EnvParameters
 def parameters_for_env() -> EnvParameters:
     params = EnvParameters(
         data_path="data_for_test/data_env_test.csv",
-        max_time_point=10,
-        window=2,
+        start_time=1677865680,
+        end_time=1677924600,
+        window=0,
         initial_balance=10000,
         action_step_size=0.25,
         terminate_threshold=0.5,  # terminate balance is 5000

@@ -102,8 +102,7 @@ class Agent:
         # Plot average of 100 last episodes
         if episodes_so_far >= 100:
             means = array_to_plot.unfold(0, 100, 1).mean(1).view(-1)
-            means = torch.cat((torch.zeros(99), means))
-            plt.plot(means.numpy())
+            plt.plot(torch.arange(99, means.size(0) + 99), means.numpy())
 
         if save_every != 0 and episodes_so_far % save_every == 0:
             plt.savefig(f"{self.configs.model_dir}/{plot_name}")
@@ -118,8 +117,7 @@ class Agent:
         plt.plot(final_balances.numpy())
         if len(final_balances) >= 100:
             means = final_balances.unfold(0, 100, 1).mean(1).view(-1)
-            means = torch.cat((torch.zeros(99), means))
-            plt.plot(means.numpy())
+            plt.plot(torch.arange(99, means.size(0) + 99), means.numpy())
 
         plt.savefig(f"{directory}/{filename}.png")
 

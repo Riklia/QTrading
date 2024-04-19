@@ -22,26 +22,22 @@ class CryptoTradingEnvironment(gym.Env):
     # work with Balance must be modified. For example, _get_overall_current_balance must use corresponding prices
     def __init__(self, initial_balance: Balance, configs: EnvParameters):
         super(CryptoTradingEnvironment, self).__init__()
-        self.time_point = 0
-        self.max_time_point = configs.max_time_point
+        self.window = configs.window
         # date processing
         data = pd.read_csv(configs.data_path)
+        data = data[(configs.start_time <= data['date']) & (data['date'] <= configs.end_time)]
         data['date'] = pd.to_datetime(data['date'], unit="s")
         data.sort_values(by='date', inplace=True)
-        self.dates = data['date'][-self.max_time_point:].reset_index(drop=True)
-        # prices processing
-        self.original_prices = data["close_default"][-self.max_time_point:].reset_index(drop=True)
-        self.prices_scaler = MinMaxScaler()
-        prices = self.original_prices.values.reshape(-1, 1)
-        self.prices = pd.Series(self.prices_scaler.fit_transform(prices).flatten())
-        # additional features
-        self.volume_default = data["volume_default"][-self.max_time_point:].reset_index(drop=True)
-        spread_original = data["spread"][-self.max_time_point:].reset_index(drop=True)
-        self.spread = self._minmax_scale_feature(spread_original)
-        funding_original = data["funding"][-self.max_time_point:].reset_index(drop=True)
-        self.funding = self._minmax_scale_feature(funding_original)
+        self.dates = data['date'].reset_index(drop=True)
+        self.max_time_point = len(self.dates) - 1
+        # initial point is window size, not 0
+        self.time_point = self.window
+        # features
+        self.prices = data["close_default"].reset_index(drop=True)
+        self.volume_default = data["volume_default"].reset_index(drop=True)
+        self.spread = data["spread"].reset_index(drop=True)
+        self.funding = data["funding"].reset_index(drop=True)
 
-        self.window = configs.window
         self.initial_balance = initial_balance
 
         self.current_balance = copy.deepcopy(initial_balance)
@@ -58,7 +54,7 @@ class CryptoTradingEnvironment(gym.Env):
     def reset(self):
         # Reset the environment to its initial state
         self.current_balance = copy.deepcopy(self.initial_balance)
-        self.time_point = 0
+        self.time_point = self.window
         self.action_history = []
         return self._get_observation(), {}
 
@@ -78,24 +74,26 @@ class CryptoTradingEnvironment(gym.Env):
         time_penalty = 0
         if overall_reward <= 0:
             time_penalty = abs(0.001 * overall_reward) * self.time_point
+        else:
+            overall_reward *= 5
         # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
         # with this coefficient in the future)
         usd_overall_reward = 0
         if terminated or truncated:
-            usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"]) / self.initial_balance["USD"]
-
+            # usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"]) / self.initial_balance["USD"]
+            if truncated:
+                print(f"END ON {self.time_point} Balance: {self.get_overall_current_balance()}")
+            if terminated:
+                print(f"LOST ON {self.time_point}")
         # reward function
-        reward = overall_reward + usd_overall_reward - 10 * terminated - time_penalty
-        if self.current_balance["USD"] > self.initial_balance["USD"]:
-            reward *= 3
-
+        reward = overall_reward + usd_overall_reward - 5 * terminated - 0*time_penalty
         if not truncated:
             self.time_point += 1
 
         return self._get_observation(), reward, terminated, truncated, {}
 
     def _sell(self, sell_percentage: float):
-        btc_price = self.get_original_current_price()
+        btc_price = self.get_current_price()
         if 0 <= sell_percentage <= 1:
             # to avoid restricting agent in actions, we include transaction fee in sell percentage and this way
             # always sure that we have enough money for the transaction
@@ -107,7 +105,7 @@ class CryptoTradingEnvironment(gym.Env):
             self.current_balance.update_balance("BTC", -btc_to_subtract)
 
     def _buy(self, buy_percentage: float):
-        btc_price = self.get_original_current_price()
+        btc_price = self.get_current_price()
         if 0 <= buy_percentage <= 1:
             # to avoid restricting agent in actions, we include transaction fee in buy percentage and this way
             # always sure that we have enough money for the transaction
@@ -125,12 +123,8 @@ class CryptoTradingEnvironment(gym.Env):
     def get_current_timestamp(self):
         return self.dates[self.time_point]
 
-    def get_original_current_price(self):
-        current_price = self.prices_scaler.inverse_transform(self.get_current_price().reshape(-1, 1))[0][0]
-        return current_price
-
     def get_overall_current_balance(self):
-        price = self.get_original_current_price()
+        price = self.get_current_price()
         return self.current_balance["USD"] + self.current_balance["BTC"] * price
 
     def _get_window_feature(self, feature_array, include_current: bool = True):
@@ -148,15 +142,16 @@ class CryptoTradingEnvironment(gym.Env):
         return result
 
     def _get_observation(self):
-        price = self.get_current_price()
-        prices_in_window = self._get_window_feature(self.prices, False)
+        prices_in_window = self._get_window_feature(self.prices, True)
         funding_in_window = self._get_window_feature(self.funding, True)
+        volume_in_window = self._get_window_feature(self.volume_default, True)
+        spread_in_window = self._get_window_feature(self.spread, True)
+        ema_price = self._exponential_moving_average(prices_in_window, self.window // 2)
         usd_state = self.current_balance["USD"] / (self.initial_balance["USD"] + 1e-7)
         btc_state = self.current_balance["BTC"] / (self.initial_balance["BTC"] + 1e-7)
-        return np.array(prices_in_window + funding_in_window +
-                        [price, self.volume_default[self.time_point],
-                         self.spread[self.time_point],
-                         usd_state, btc_state])
+        overall_balance_state = self.get_overall_current_balance() / (self.initial_overall_balance + 1e-7)
+        return np.array(prices_in_window + funding_in_window + volume_in_window + spread_in_window + list(ema_price) +
+                        [usd_state, btc_state, overall_balance_state])
 
     def _make_action_line(self) -> list[go.Scatter]:
         x_coordinates = []
@@ -183,7 +178,7 @@ class CryptoTradingEnvironment(gym.Env):
         return scatter_traces
 
     def render(self, directory):
-        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+1], y=self.original_prices[:self.time_point+1],
+        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+1], y=self.prices[:self.time_point+1],
                                      mode='lines',
                                      name='BTC Price')
 
@@ -193,7 +188,7 @@ class CryptoTradingEnvironment(gym.Env):
 
         data_to_plot = [trace_btc_price]
         if self.time_point + 1 < len(self.dates):
-            trace_current_time = go.Scatter(x=[self.dates[self.time_point+1]], y=[self.original_prices[self.time_point+1]],
+            trace_current_time = go.Scatter(x=[self.dates[self.time_point+1]], y=[self.prices[self.time_point+1]],
                                             mode='markers', name='Current Time Point', marker=dict(color='red', size=10))
 
             data_to_plot += [trace_current_time]
@@ -220,3 +215,11 @@ class CryptoTradingEnvironment(gym.Env):
         scaler = MinMaxScaler()
         return pd.Series(scaler.fit_transform(input_feature.values.reshape(-1, 1)).flatten())
 
+    @staticmethod
+    def _exponential_moving_average(prices, period, weighting_factor=0.2):
+        ema = np.zeros(len(prices))
+        sma = np.mean(prices[:period])
+        ema[period - 1] = sma
+        for i in range(period, len(prices)):
+            ema[i] = (prices[i] * weighting_factor) + (ema[i - 1] * (1 - weighting_factor))
+        return ema

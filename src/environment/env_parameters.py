@@ -4,7 +4,8 @@ from dataclasses import dataclass
 @dataclass(slots=True)
 class EnvParameters:
     data_path: str
-    max_time_point: int
+    start_time: int
+    end_time: int
     # how many previous prices take into consideration
     window: int
     initial_balance: float
