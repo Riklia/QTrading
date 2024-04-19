@@ -80,11 +80,8 @@ class CryptoTradingEnvironment(gym.Env):
         # with this coefficient in the future)
         usd_overall_reward = 0
         if terminated or truncated:
+            pass
             # usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"]) / self.initial_balance["USD"]
-            if truncated:
-                print(f"END ON {self.time_point} Balance: {self.get_overall_current_balance()}")
-            if terminated:
-                print(f"LOST ON {self.time_point}")
         # reward function
         reward = overall_reward + usd_overall_reward - 5 * terminated - 0*time_penalty
         if not truncated:
