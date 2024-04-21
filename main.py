@@ -9,7 +9,7 @@ from src.train_config import TrainConfig
 
 def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agent):
     state, info = env.reset()
-    state = torch.tensor(state, dtype=torch.float32, device=agent.device).unsqueeze(0)
+    state = torch.tensor(state, device=agent.device).unsqueeze(0)
     render = configs.learning_parameters.render
     tau = configs.learning_parameters.tau
     while True:
@@ -26,10 +26,9 @@ def run_episode(configs: TrainConfig, env: CryptoTradingEnvironment, agent: Agen
         if terminated:
             next_state = None
         else:
-            next_state = torch.tensor(observation, dtype=torch.float32, device=agent.device).unsqueeze(0)
+            next_state = torch.tensor(observation, device=agent.device).unsqueeze(0)
 
-        hx, cx = agent.recurrent_cell
-        agent.replay_memory.push(state, hx.squeeze(0), cx.squeeze(0), action, next_state, reward)
+        agent.replay_memory.push(state, action, next_state, reward)
         state = next_state
         agent.learn()
 
@@ -79,14 +78,8 @@ def main():
     initial_balance.register_currency("BTC")
     env = CryptoTradingEnvironment(initial_balance, configs.env_parameters)
     n_actions = env.action_space.n
-    state, info = env.reset()
-    n_observations = len(state)
-
-    agent = Agent(n_observations, n_actions, configs)
-
+    agent = Agent(env.observation_shape, n_actions, configs)
     train(configs, agent, env)
-    # it is in the destructor now
-    # agent.save_model(model_dir, model_name)
 
 
 if __name__ == "__main__":

@@ -1,56 +1,69 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.environment import ObservationShape
 
 
 class QNetwork(nn.Module):
-    def __init__(self, n_observations, n_actions):
+    def __init__(self, observation_shape: ObservationShape, n_actions):
         super(QNetwork, self).__init__()
-        self.n_observations = n_observations
-        self.hidden_size = n_observations * 3
-        self.linear1 = nn.Linear(n_observations, n_observations*2)
-        self.lstm = nn.LSTM(input_size=n_observations*2, hidden_size=self.hidden_size, num_layers=1)
-        self.linear2 = nn.Linear(self.hidden_size, n_observations*3 + n_observations // 2)
-        self.linear3 = nn.Linear(self.linear2.out_features, self.linear2.out_features * 2)
-        self.dropout1 = nn.Dropout(p=0.2)
-        self.linear4 = nn.Linear(self.linear3.out_features, self.linear3.out_features * 3)
-        self.dropout2 = nn.Dropout(p=0.2)
-        self.linear5 = nn.Linear(self.linear4.out_features, self.linear4.out_features // 2)
-        self.linear6 = nn.Linear(self.linear5.out_features, self.linear5.out_features // 2)
-        self.dropout3 = nn.Dropout(p=0.1)
-        self.linear7 = nn.Linear(self.linear6.out_features, self.linear6.out_features // 2)
-        self.linear8 = nn.Linear(self.linear7.out_features, self.linear7.out_features // 2)
-        self.output = nn.Linear(self.linear8.out_features, n_actions)
+        self.observation_shape = observation_shape
+        self.hidden_size = observation_shape.window_size
+        self.linear_balances = nn.Linear(observation_shape.n_balances, 16)
+        self.lstm = nn.LSTM(input_size=observation_shape.window_size,
+                            hidden_size=self.hidden_size,
+                            num_layers=1,
+                            batch_first=True)
+        concat_in_size = self.observation_shape.n_window_features + self.linear_balances.out_features
+        self.linear_concat = nn.Linear(concat_in_size, concat_in_size // 2)
+        self.linear1 = nn.Linear(self.linear_concat.out_features, self.linear_concat.out_features // 2)
+        self.linear2 = nn.Linear(self.linear1.out_features, self.linear1.out_features // 2)
+        self.output = nn.Linear(self.linear2.out_features, n_actions)
 
-    def forward(self, observation: torch.tensor, recurrent_cell: torch.tensor, sequence_length: int = 1):
-        h = observation
-        h = F.relu(self.linear1(h))
-        if sequence_length == 1:
-            h, recurrent_cell = self.lstm(h.unsqueeze(1), recurrent_cell)
-            h = h.squeeze(1)
+        # self.dropout1 = nn.Dropout(p=0.2)
+        # self.linear4 = nn.Linear(self.linear3.out_features, self.linear3.out_features * 3)
+        # self.dropout2 = nn.Dropout(p=0.2)
+        # self.linear5 = nn.Linear(self.linear4.out_features, self.linear4.out_features // 2)
+        # self.linear6 = nn.Linear(self.linear5.out_features, self.linear5.out_features // 2)
+        # self.dropout3 = nn.Dropout(p=0.1)
+        # self.linear7 = nn.Linear(self.linear6.out_features, self.linear6.out_features // 2)
+        # self.linear8 = nn.Linear(self.linear7.out_features, self.linear7.out_features // 2)
+
+    def forward(self, observation: torch.tensor):
+        observation = observation.to(torch.float32)
+        window_obs = observation[..., :-self.observation_shape.n_balances]
+        if observation.size(0) > 1:
+            window_obs = window_obs.view(-1, self.observation_shape.n_window_features,
+                                         self.observation_shape.window_size)
         else:
-            h_shape = tuple(h.size())
-            h = h.reshape((h_shape[0] // sequence_length), sequence_length, h_shape[1])
-            h, recurrent_cell = self.lstm(h, recurrent_cell)
-            h_shape = tuple(h.size())
-            h = h.reshape(h_shape[0] * h_shape[1], h_shape[2])
+            window_obs = window_obs.view(-1, self.observation_shape.window_size)
+        balances_obs = observation[..., -self.observation_shape.n_balances:]
+        balances_obs = balances_obs.view(balances_obs.size(0), -1)
+        balances_x = F.relu(self.linear_balances(balances_obs))
+        window_x, _ = self.lstm(window_obs)
 
-        h = F.relu(self.linear2(h))
-        h = F.relu(self.linear3(h))
-        h = self.dropout1(h)
-        h = F.relu(self.linear4(h))
-        h = self.dropout2(h)
-        h = F.relu(self.linear5(h))
-        h = F.relu(self.linear6(h))
-        h = self.dropout3(h)
-        h = F.relu(self.linear7(h))
-        h = F.relu(self.linear8(h))
-        return self.output(h), recurrent_cell
+        # if sequence_length == 1:
+        #     window_x = window_x.squeeze(1)
+        # else:
+        #     h_shape = tuple(window_obs.size())
+        #     window_x = window_obs.reshape((h_shape[0] // sequence_length), sequence_length, h_shape[1])
+        #     window_x, recurrent_cell = self.lstm(window_x)
+        #     h_shape = tuple(window_x.size())
+        #     window_x = window_x.reshape(h_shape[0] * h_shape[1], h_shape[2])
+        if observation.size(0) > 1:
+            window_x = window_x[:, :, -1]
+            window_x = window_x.view(window_x.size(0), -1)
+        else:
+            window_x = window_x[:, -1]
+            window_x = window_x.view(-1, window_x.size(0))
+        x = torch.cat((window_x, balances_x.view(balances_x.size(0), -1)), dim=1)
+        x = F.relu(self.linear_concat(x))
+        x = F.relu(self.linear1(x))
+        x = F.relu(self.linear2(x))
+        return self.output(x)
 
-    def init_recurrent_cell_states(self, num_sequences: int, device: torch.device) -> tuple:
-        hxs = torch.zeros(num_sequences, self.hidden_size,
-                          dtype=torch.float32, device=device).unsqueeze(0)
-        cxs = torch.zeros(num_sequences, self.hidden_size,
-                          dtype=torch.float32, device=device).unsqueeze(0)
+    def init_recurrent_cell_states(self) -> tuple:
+        h0 = torch.zeros(self.lstm.num_layers, self.observation_shape.n_window_features, self.hidden_size).requires_grad_()
+        c0 = torch.zeros(self.lstm.num_layers, self.observation_shape.n_window_features, self.hidden_size).requires_grad_()
 
-        return hxs, cxs
+        return h0, c0

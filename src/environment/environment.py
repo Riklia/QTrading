@@ -5,9 +5,12 @@ import copy
 import plotly.graph_objs as go
 import plotly.offline as pyo
 from sklearn.preprocessing import MinMaxScaler
+from collections import namedtuple
 from src.environment.balance import Balance
 from src.environment.env_parameters import EnvParameters
 from src.environment.action import RangeSpace, MainActionTypes
+
+ObservationShape = namedtuple('ObservationShape', ('n_classes', 'n_window_features', 'window_size', 'n_balances'))
 
 
 class CryptoTradingEnvironment(gym.Env):
@@ -37,6 +40,8 @@ class CryptoTradingEnvironment(gym.Env):
         self.volume_default = data["volume_default"].reset_index(drop=True)
         self.spread = data["spread"].reset_index(drop=True)
         self.funding = data["funding"].reset_index(drop=True)
+        # 2 classes: 4 window features and 3 balance features
+        self.observation_shape = ObservationShape(2, 4, self.window, 3)
 
         self.initial_balance = initial_balance
 
@@ -124,11 +129,12 @@ class CryptoTradingEnvironment(gym.Env):
         price = self.get_current_price()
         return self.current_balance["USD"] + self.current_balance["BTC"] * price
 
-    def _get_window_feature(self, feature_array, include_current: bool = True):
-        start = self.time_point - self.window
-        stop = self.time_point
-        if include_current:
-            stop += 1
+    def _get_window_feature(self, feature_array):
+        # + 1 because we include current state
+        # todo: do we know all features at the moment of making the decision?
+        #  if not, rewrite state to [window_features, balances, current price] and don't forget about normalizing
+        start = self.time_point - self.window + 1
+        stop = self.time_point + 1
 
         result = []
         if start < 0:
@@ -138,17 +144,17 @@ class CryptoTradingEnvironment(gym.Env):
         result.extend(feature_array[start:stop])
         return result
 
-    def _get_observation(self):
-        prices_in_window = self._get_window_feature(self.prices, True)
-        funding_in_window = self._get_window_feature(self.funding, True)
-        volume_in_window = self._get_window_feature(self.volume_default, True)
-        spread_in_window = self._get_window_feature(self.spread, True)
-        ema_price = self._exponential_moving_average(prices_in_window, self.window // 2)
+    def _get_observation(self) -> np.array:
+        prices_in_window = self._get_normalized_feature(self._get_window_feature(self.prices))
+        funding_in_window = self._get_window_feature(self.funding)
+        volume_in_window = self._get_normalized_feature(self._get_window_feature(self.volume_default))
+        spread_in_window = self._get_window_feature(self.spread)
+        window_features = np.concatenate([prices_in_window, funding_in_window, volume_in_window, spread_in_window])
         usd_state = self.current_balance["USD"] / (self.initial_balance["USD"] + 1e-7)
         btc_state = self.current_balance["BTC"] / (self.initial_balance["BTC"] + 1e-7)
         overall_balance_state = self.get_overall_current_balance() / (self.initial_overall_balance + 1e-7)
-        return np.array(prices_in_window + funding_in_window + volume_in_window + spread_in_window + list(ema_price) +
-                        [usd_state, btc_state, overall_balance_state])
+        balance_features = [usd_state, btc_state, overall_balance_state]
+        return np.array(np.concatenate([window_features, balance_features]), dtype=np.float32).flatten()
 
     def _make_action_line(self) -> list[go.Scatter]:
         x_coordinates = []
@@ -211,6 +217,10 @@ class CryptoTradingEnvironment(gym.Env):
     def _minmax_scale_feature(input_feature: pd.Series):
         scaler = MinMaxScaler()
         return pd.Series(scaler.fit_transform(input_feature.values.reshape(-1, 1)).flatten())
+
+    @staticmethod
+    def _get_normalized_feature(feature_array):
+        return np.array(feature_array) / feature_array[-1]
 
     @staticmethod
     def _exponential_moving_average(prices, period, weighting_factor=0.2):
