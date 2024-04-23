@@ -85,8 +85,11 @@ class CryptoTradingEnvironment(gym.Env):
         truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
+        if overall_reward > 0:
+            overall_reward *= 2
+        hold_penalty = self.action_history.count(MainActionTypes.HOLD) * 0.11 / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
         # reward function
-        reward = overall_reward - terminated - 0.11 / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
+        reward = overall_reward - terminated - hold_penalty
         if not truncated:
             self.time_point += 1
 
