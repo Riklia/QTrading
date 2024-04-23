@@ -4,23 +4,18 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from src.model import QNetwork
-from src.replay_buffer import ReplayMemory, Transition
-from src.train_config import TrainConfig
+from src.replay_buffer import Transition
+from src.train_config import QTradingConfigurations
 from src.environment import ObservationShape
+from src.agent.base_agent import BaseAgent
 
 
-class Agent:
-    def __init__(self, observation_shape: ObservationShape, n_actions: int, configs: TrainConfig):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.policy_net = QNetwork(observation_shape, n_actions).to(self.device)
-        self.target_net = QNetwork(observation_shape, n_actions).to(self.device)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+class Agent(BaseAgent):
+    def __init__(self, observation_shape: ObservationShape, n_actions: int, configs: QTradingConfigurations):
+        super().__init__(observation_shape, n_actions, configs)
+        if configs.learning_parameters.continue_learning:
+            self.load_model(configs.learning_parameters.load_model_directory, configs.model_name, self.device)
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=configs.learning_parameters.lr, amsgrad=True)
-        self.observation_shape = observation_shape
-        self.n_actions = n_actions
-        self.configs = configs
-        self.replay_memory = ReplayMemory(10000)
         self.episode_usd_final_balance = []
         self.episode_rewards = []
         self.steps_done = 0
@@ -42,6 +37,9 @@ class Agent:
         reward_batch = torch.cat(batch.reward)
 
         state_action_values = self.policy_net(state_batch)
+        # action_probs = nn.functional.softmax(state_action_values, dim=1)
+        # entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-9), dim=-1).mean()
+
         state_action_values = state_action_values.gather(1, action_batch)
         next_state_values = torch.zeros(batch_size, device=self.device)
 
@@ -50,8 +48,9 @@ class Agent:
             next_state_values[non_final_mask] = out.max(1).values
         expected_state_action_values = (next_state_values * gamma) + reward_batch
 
-        criterion = nn.SmoothL1Loss()
+        criterion = nn.CrossEntropyLoss()
         loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+        # loss -= 1e-2 * entropy
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -112,10 +111,6 @@ class Agent:
             plt.plot(torch.arange(99, means.size(0) + 99), means.numpy())
 
         plt.savefig(f"{directory}/{filename}.png")
-
-    def save_model(self, directory, filename):
-        torch.save(self.policy_net.state_dict(), f"{directory}/{filename}_policy.pth")
-        torch.save(self.target_net.state_dict(), f"{directory}/{filename}_target.pth")
 
     def __del__(self):
         self.save_model(self.configs.model_dir, self.configs.model_name)

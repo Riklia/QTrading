@@ -12,22 +12,13 @@ class QNetwork(nn.Module):
         self.linear_balances = nn.Linear(observation_shape.n_balances, 16)
         self.lstm = nn.LSTM(input_size=observation_shape.window_size,
                             hidden_size=self.hidden_size,
-                            num_layers=1,
-                            batch_first=True)
+                            num_layers=2,
+                            batch_first=True, dropout=0.2)
         concat_in_size = self.observation_shape.n_window_features + self.linear_balances.out_features
         self.linear_concat = nn.Linear(concat_in_size, concat_in_size // 2)
         self.linear1 = nn.Linear(self.linear_concat.out_features, self.linear_concat.out_features // 2)
         self.linear2 = nn.Linear(self.linear1.out_features, self.linear1.out_features // 2)
         self.output = nn.Linear(self.linear2.out_features, n_actions)
-
-        # self.dropout1 = nn.Dropout(p=0.2)
-        # self.linear4 = nn.Linear(self.linear3.out_features, self.linear3.out_features * 3)
-        # self.dropout2 = nn.Dropout(p=0.2)
-        # self.linear5 = nn.Linear(self.linear4.out_features, self.linear4.out_features // 2)
-        # self.linear6 = nn.Linear(self.linear5.out_features, self.linear5.out_features // 2)
-        # self.dropout3 = nn.Dropout(p=0.1)
-        # self.linear7 = nn.Linear(self.linear6.out_features, self.linear6.out_features // 2)
-        # self.linear8 = nn.Linear(self.linear7.out_features, self.linear7.out_features // 2)
 
     def forward(self, observation: torch.tensor):
         observation = observation.to(torch.float32)
@@ -42,14 +33,6 @@ class QNetwork(nn.Module):
         balances_x = F.relu(self.linear_balances(balances_obs))
         window_x, _ = self.lstm(window_obs)
 
-        # if sequence_length == 1:
-        #     window_x = window_x.squeeze(1)
-        # else:
-        #     h_shape = tuple(window_obs.size())
-        #     window_x = window_obs.reshape((h_shape[0] // sequence_length), sequence_length, h_shape[1])
-        #     window_x, recurrent_cell = self.lstm(window_x)
-        #     h_shape = tuple(window_x.size())
-        #     window_x = window_x.reshape(h_shape[0] * h_shape[1], h_shape[2])
         if observation.size(0) > 1:
             window_x = window_x[:, :, -1]
             window_x = window_x.view(window_x.size(0), -1)

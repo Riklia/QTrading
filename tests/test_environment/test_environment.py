@@ -9,8 +9,8 @@ def parameters_for_env() -> EnvParameters:
         data_path="data_for_test/data_env_test.csv",
         start_time=1677865680,
         end_time=1677924600,
-        window=0,
-        initial_balance=10000,
+        window=1,
+        initial_usd_balance=10000,
         action_step_size=0.25,
         terminate_threshold=0.5,  # terminate balance is 5000
         transaction_fee=0.1
@@ -21,7 +21,7 @@ def parameters_for_env() -> EnvParameters:
 @pytest.fixture(scope="session")
 def initial_balance(parameters_for_env: EnvParameters) -> Balance:
     balance = Balance()
-    balance.update_balance("USD", parameters_for_env.initial_balance)
+    balance.update_balance("USD", parameters_for_env.initial_usd_balance)
     balance.register_currency("BTC")
     return balance
 
@@ -34,8 +34,8 @@ def environment(initial_balance: Balance, parameters_for_env: EnvParameters) -> 
 
 def test_reset(environment: CryptoTradingEnvironment, parameters_for_env: EnvParameters):
     # given
-    time_point_expected = 0
-    current_balance_val_expected = parameters_for_env.initial_balance
+    time_point_expected = 1
+    current_balance_val_expected = parameters_for_env.initial_usd_balance
     action_history_len_expected = 0
     # when
     environment.reset()

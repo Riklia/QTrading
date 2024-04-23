@@ -1,28 +1,30 @@
 {
   "model_dir": "models/test",
   "model_name": "model",
+  "mode": "offline_training",
   "learning_parameters": {
     "gamma": 0.97,
-    "eps_start": 0.9,
-    "eps_end": 0.02,
-    "eps_decay": 200,
+    "eps_start": 0.99,
+    "eps_end": 0.05,
+    "eps_decay": 4000,
     "tau": 0.005,
     "lr": 3e-4,
     "batch_size": 64,
-    "num_episodes": 7000,
+    "num_episodes": 8000,
     "print_frequency": 10,
     "render": false,
-    "save_plot_every": 10
+    "save_plot_every": 10,
+    "overwrite": false
   },
   "env_parameters": {
-    "data_path": "data/funding_houly.csv",
+    "data_path": "data/funding_hourly.csv",
     "start_time": 1677927600,
-    "end_time": 1679421600,
-    "window": 24,
-    "initial_balance": 12000,
-    "action_step_size": 1,
+    "end_time": 1706616000,
+    "window": 120,
+    "initial_usd_balance": 12000,
+    "initial_btc_balance": 0.7,
+    "action_step_size": 0.25,
     "terminate_threshold": 0.1,
     "transaction_fee": 0.01
-  },
-  "overwrite": true
+  }
 }

@@ -10,6 +10,8 @@ from src.environment.balance import Balance
 from src.environment.env_parameters import EnvParameters
 from src.environment.action import RangeSpace, MainActionTypes
 
+
+YEAR = 365
 ObservationShape = namedtuple('ObservationShape', ('n_classes', 'n_window_features', 'window_size', 'n_balances'))
 
 
@@ -32,6 +34,7 @@ class CryptoTradingEnvironment(gym.Env):
         data['date'] = pd.to_datetime(data['date'], unit="s")
         data.sort_values(by='date', inplace=True)
         self.dates = data['date'].reset_index(drop=True)
+        self.date_unit_in_seconds = (self.dates.iloc[1] - self.dates.iloc[0]).total_seconds()
         self.max_time_point = len(self.dates) - 1
         # initial point is window size, not 0
         self.time_point = self.window
@@ -66,29 +69,24 @@ class CryptoTradingEnvironment(gym.Env):
     def step(self, action: int):
         percentage = self.action_space.range_value(action)
         action_type = MainActionTypes.percentage_to_type(percentage)
-        self.action_history.append(action_type)
         if action_type == MainActionTypes.SELL:
-            self._sell(abs(percentage))
+            if self.current_balance["BTC"] < 1e-3:
+                action_type = MainActionTypes.HOLD
+            else:
+                self._sell(abs(percentage))
         elif action_type == MainActionTypes.BUY:
-            self._buy(abs(percentage))
+            if self.current_balance["USD"] < 1e-3:
+                action_type = MainActionTypes.HOLD
+            else:
+                self._buy(abs(percentage))
+        self.action_history.append(action_type)
 
         terminated = (self.get_overall_current_balance() < self.terminate_threshold * self.initial_overall_balance)
         truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
-        time_penalty = 0
-        if overall_reward <= 0:
-            time_penalty = abs(0.001 * overall_reward) * self.time_point
-        else:
-            overall_reward *= 5
-        # usd_overall_reward - specify that in result we want to have more money in usd (worth to experiment
-        # with this coefficient in the future)
-        usd_overall_reward = 0
-        if terminated or truncated:
-            pass
-            # usd_overall_reward = 0.005 * (self.current_balance["USD"] - self.initial_balance["USD"]) / self.initial_balance["USD"]
         # reward function
-        reward = overall_reward + usd_overall_reward - 5 * terminated - 0*time_penalty
+        reward = overall_reward - terminated - 0.11 / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
         if not truncated:
             self.time_point += 1
 
