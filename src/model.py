@@ -8,16 +8,17 @@ class QNetwork(nn.Module):
     def __init__(self, observation_shape: ObservationShape, n_actions):
         super(QNetwork, self).__init__()
         self.observation_shape = observation_shape
-        self.hidden_size = observation_shape.window_size
-        self.linear_balances = nn.Linear(observation_shape.n_balances, 16)
+        self.hidden_size = observation_shape.window_size * 32
+        self.linear_balances1 = nn.Linear(observation_shape.n_balances, 16)
+        self.linear_balances2 = nn.Linear(self.linear_balances1.out_features, 32)
         self.lstm = nn.LSTM(input_size=observation_shape.window_size,
                             hidden_size=self.hidden_size,
                             num_layers=2,
                             batch_first=True, dropout=0.2)
-        concat_in_size = self.observation_shape.n_window_features + self.linear_balances.out_features
+        concat_in_size = self.observation_shape.n_window_features + self.linear_balances2.out_features
         self.linear_concat = nn.Linear(concat_in_size, concat_in_size // 2)
         self.linear1 = nn.Linear(self.linear_concat.out_features, self.linear_concat.out_features // 2)
-        self.linear2 = nn.Linear(self.linear1.out_features, self.linear1.out_features // 2)
+        self.linear2 = nn.Linear(self.linear1.out_features, max(self.linear1.out_features // 2, n_actions))
         self.output = nn.Linear(self.linear2.out_features, n_actions)
 
     def forward(self, observation: torch.tensor):
@@ -30,7 +31,8 @@ class QNetwork(nn.Module):
             window_obs = window_obs.view(-1, self.observation_shape.window_size)
         balances_obs = observation[..., -self.observation_shape.n_balances:]
         balances_obs = balances_obs.view(balances_obs.size(0), -1)
-        balances_x = F.relu(self.linear_balances(balances_obs))
+        balances_x = F.relu(self.linear_balances1(balances_obs))
+        balances_x = F.relu(self.linear_balances2(balances_x))
         window_x, _ = self.lstm(window_obs)
 
         if observation.size(0) > 1:
