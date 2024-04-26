@@ -8,7 +8,7 @@ class QNetwork(nn.Module):
     def __init__(self, observation_shape: ObservationShape, n_actions):
         super(QNetwork, self).__init__()
         self.observation_shape = observation_shape
-        self.hidden_size = observation_shape.window_size * 32
+        self.hidden_size = observation_shape.window_size * 16
         self.linear_balances1 = nn.Linear(observation_shape.n_balances, 16)
         self.linear_balances2 = nn.Linear(self.linear_balances1.out_features, 32)
         self.lstm = nn.LSTM(input_size=observation_shape.window_size,
@@ -18,8 +18,7 @@ class QNetwork(nn.Module):
         concat_in_size = self.observation_shape.n_window_features + self.linear_balances2.out_features
         self.linear_concat = nn.Linear(concat_in_size, concat_in_size // 2)
         self.linear1 = nn.Linear(self.linear_concat.out_features, self.linear_concat.out_features // 2)
-        self.linear2 = nn.Linear(self.linear1.out_features, max(self.linear1.out_features // 2, n_actions))
-        self.output = nn.Linear(self.linear2.out_features, n_actions)
+        self.output = nn.Linear(self.linear1.out_features, n_actions)
 
     def forward(self, observation: torch.tensor):
         observation = observation.to(torch.float32)
@@ -44,7 +43,6 @@ class QNetwork(nn.Module):
         x = torch.cat((window_x, balances_x.view(balances_x.size(0), -1)), dim=1)
         x = F.relu(self.linear_concat(x))
         x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
         return self.output(x)
 
     def init_recurrent_cell_states(self) -> tuple:

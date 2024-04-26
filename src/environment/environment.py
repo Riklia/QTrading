@@ -85,8 +85,9 @@ class CryptoTradingEnvironment(gym.Env):
         truncated = (self.time_point >= self.max_time_point - 1)
 
         overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
+        hold_penalty = 0.11 * self.action_history.count(MainActionTypes.HOLD) / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
         # reward function
-        reward = overall_reward - terminated - 0.11 / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
+        reward = overall_reward - 0*terminated - hold_penalty
         if not truncated:
             self.time_point += 1
 
@@ -160,13 +161,14 @@ class CryptoTradingEnvironment(gym.Env):
         marker_colors = []
 
         for i, action in enumerate(self.action_history):
+            idx = self.window + i
             if action == MainActionTypes.SELL:
-                x_coordinates.append(self.dates[i])
-                y_coordinates.append(self.prices[i])
+                x_coordinates.append(self.dates[idx])
+                y_coordinates.append(self.prices[idx])
                 marker_colors.append('red')
             elif action == MainActionTypes.BUY:
-                x_coordinates.append(self.dates[i])
-                y_coordinates.append(self.prices[i])
+                x_coordinates.append(self.dates[idx])
+                y_coordinates.append(self.prices[idx])
                 marker_colors.append('green')
 
         scatter_traces = []
