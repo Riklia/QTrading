@@ -48,9 +48,9 @@ class Agent(BaseAgent):
             next_state_values[non_final_mask] = out.max(1).values
         expected_state_action_values = (next_state_values * gamma) + reward_batch
 
-        criterion = nn.CrossEntropyLoss()
-        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
-        # loss -= 1e-2 * entropy
+        criterion = nn.MSELoss()
+        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1).float())
+        # loss -= 1e-3 * entropy
 
         self.optimizer.zero_grad()
         loss.backward()
