@@ -4,24 +4,20 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from src.model import QNetwork
-from src.replay_buffer import ReplayMemory, Transition
-from src.train_config import TrainConfig
+from src.replay_buffer import Transition
+from src.train_config import QTradingConfigurations
+from src.environment import ObservationShape
+from src.agent.base_agent import BaseAgent
 
 
-class Agent:
-    def __init__(self, n_observations: int, n_actions: int, configs: TrainConfig):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.policy_net = QNetwork(n_observations, n_actions).to(self.device)
-        self.target_net = QNetwork(n_observations, n_actions).to(self.device)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+class Agent(BaseAgent):
+    def __init__(self, observation_shape: ObservationShape, n_actions: int, configs: QTradingConfigurations):
+        super().__init__(observation_shape, n_actions, configs)
+        if configs.learning_parameters.continue_learning:
+            self.load_model(configs.learning_parameters.load_model_directory, configs.model_name, self.device)
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=configs.learning_parameters.lr, amsgrad=True)
-        self.recurrent_cell = self.policy_net.init_recurrent_cell_states(1, self.device)
-        self.n_observations = n_observations
-        self.n_actions = n_actions
-        self.configs = configs
-        self.replay_memory = ReplayMemory(10000)
         self.episode_usd_final_balance = []
+        self.episode_rewards = []
         self.steps_done = 0
 
     def learn(self):
@@ -37,28 +33,24 @@ class Agent:
                                       dtype=torch.bool)
         non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
         state_batch = torch.cat(batch.state)
-        hx_batch = torch.cat(batch.hx)
-        cx_batch = torch.cat(batch.cx)
-        recurrent_cell_batch = (hx_batch.unsqueeze(0), cx_batch.unsqueeze(0))
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
 
-        state_action_values, _ = self.policy_net(state_batch, recurrent_cell_batch, len(state_batch))
+        state_action_values = self.policy_net(state_batch)
+        # action_probs = nn.functional.softmax(state_action_values, dim=1)
+        # entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-9), dim=-1).mean()
+
         state_action_values = state_action_values.gather(1, action_batch)
         next_state_values = torch.zeros(batch_size, device=self.device)
 
-        target_hx_batch = hx_batch.clone()
-        target_cx_batch = cx_batch.clone()
-        target_hx_batch = target_hx_batch[non_final_mask]
-        target_cx_batch = target_cx_batch[non_final_mask]
-        target_recurrent_cell_batch = (target_hx_batch.unsqueeze(0), target_cx_batch.unsqueeze(0))
         with torch.no_grad():
-            out, _ = self.target_net(non_final_next_states, target_recurrent_cell_batch, len(non_final_next_states))
+            out = self.target_net(non_final_next_states)
             next_state_values[non_final_mask] = out.max(1).values
         expected_state_action_values = (next_state_values * gamma) + reward_batch
 
-        criterion = nn.SmoothL1Loss()
-        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+        criterion = nn.MSELoss()
+        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1).float())
+        # loss -= 1e-3 * entropy
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -74,34 +66,37 @@ class Agent:
         self.steps_done += 1
         if sample > eps_threshold:
             with torch.no_grad():
-                out, self.recurrent_cell = self.policy_net(state, self.recurrent_cell)
+                out = self.policy_net(state)
                 return out.max(1).indices.view(1, 1)
         else:
             return torch.tensor([[random.randrange(self.n_actions)]], device=self.device, dtype=torch.long)
 
-    def plot_durations(self, show_result=False):
-        final_balances = torch.tensor(self.episode_usd_final_balance, dtype=torch.float)
+    def plot_durations(self, array_to_plot=None, plot_name: str = "learning_plot.png",
+                       y_label: str = "Final USD balance", show_result=False):
 
+        if array_to_plot is None:
+            array_to_plot = torch.tensor(self.episode_usd_final_balance, dtype=torch.float)
+        else:
+            array_to_plot = torch.tensor(array_to_plot, dtype=torch.float)
         save_every = self.configs.learning_parameters.save_plot_every
-        episodes_so_far = len(final_balances)
+        episodes_so_far = len(array_to_plot)
 
         plt.figure(1)
         if show_result:
-            plt.title('Result')
+            plt.title("Result")
         else:
             plt.clf()
-            plt.title('Training...')
-        plt.xlabel('Episode')
-        plt.ylabel('Final USD balance')
-        plt.plot(final_balances.numpy())
+            plt.title("Training...")
+        plt.xlabel("Episode")
+        plt.ylabel(y_label)
+        plt.plot(array_to_plot.numpy())
         # Plot average of 100 last episodes
         if episodes_so_far >= 100:
-            means = final_balances.unfold(0, 100, 1).mean(1).view(-1)
-            means = torch.cat((torch.zeros(99), means))
-            plt.plot(means.numpy())
+            means = array_to_plot.unfold(0, 100, 1).mean(1).view(-1)
+            plt.plot(torch.arange(99, means.size(0) + 99), means.numpy())
 
         if save_every != 0 and episodes_so_far % save_every == 0:
-            plt.savefig(f"{self.configs.model_dir}/learning_plot.png")
+            plt.savefig(f"{self.configs.model_dir}/{plot_name}")
         plt.pause(0.001)
 
     def save_plot(self, directory, filename):
@@ -113,14 +108,9 @@ class Agent:
         plt.plot(final_balances.numpy())
         if len(final_balances) >= 100:
             means = final_balances.unfold(0, 100, 1).mean(1).view(-1)
-            means = torch.cat((torch.zeros(99), means))
-            plt.plot(means.numpy())
+            plt.plot(torch.arange(99, means.size(0) + 99), means.numpy())
 
         plt.savefig(f"{directory}/{filename}.png")
-
-    def save_model(self, directory, filename):
-        torch.save(self.policy_net.state_dict(), f"{directory}/{filename}_policy.pth")
-        torch.save(self.target_net.state_dict(), f"{directory}/{filename}_target.pth")
 
     def __del__(self):
         self.save_model(self.configs.model_dir, self.configs.model_name)
