@@ -44,7 +44,7 @@ class CryptoTradingEnvironment(gym.Env):
         self.spread = data["spread"].reset_index(drop=True)
         self.funding = data["funding"].reset_index(drop=True)
         # 2 classes: 4 window features and 3 balance features
-        self.observation_shape = ObservationShape(2, 4, self.window, 3)
+        self.observation_shape = ObservationShape(2, 4, self.window, 2)
 
         self.initial_balance = initial_balance
 
@@ -70,12 +70,12 @@ class CryptoTradingEnvironment(gym.Env):
         percentage = self.action_space.range_value(action)
         action_type = MainActionTypes.percentage_to_type(percentage)
         if action_type == MainActionTypes.SELL:
-            if self.current_balance["BTC"] < 1e-3:
+            if self.current_balance["BTC"] < 1e-5:
                 action_type = MainActionTypes.HOLD
             else:
                 self._sell(abs(percentage))
         elif action_type == MainActionTypes.BUY:
-            if self.current_balance["USD"] < 1e-3:
+            if self.current_balance["USD"] < 1e-5:
                 action_type = MainActionTypes.HOLD
             else:
                 self._buy(abs(percentage))
@@ -88,7 +88,7 @@ class CryptoTradingEnvironment(gym.Env):
         hold_penalty = 0.11 * self.action_history.count(MainActionTypes.HOLD) / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
         # reward function
         reward = overall_reward - 0*terminated - hold_penalty
-        if not truncated:
+        if not truncated and not terminated:
             self.time_point += 1
 
         return self._get_observation(), reward, terminated, truncated, {}
@@ -149,10 +149,11 @@ class CryptoTradingEnvironment(gym.Env):
         volume_in_window = self._get_normalized_feature(self._get_window_feature(self.volume_default))
         spread_in_window = self._get_window_feature(self.spread)
         window_features = np.concatenate([prices_in_window, funding_in_window, volume_in_window, spread_in_window])
-        usd_state = self.current_balance["USD"] / (self.initial_balance["USD"] + 1e-7)
-        btc_state = self.current_balance["BTC"] / (self.initial_balance["BTC"] + 1e-7)
-        overall_balance_state = self.get_overall_current_balance() / (self.initial_overall_balance + 1e-7)
-        balance_features = [usd_state, btc_state, overall_balance_state]
+        usd_state = self.current_balance["USD"] / (self.initial_overall_balance + 1e-7)
+        btc_state = self.current_balance["BTC"] * self.prices[self.time_point] / (self.initial_overall_balance + 1e-7)
+        # overall_balance_state is usd_state + btc_state, we don't need it anymore
+        # overall_balance_state = self.get_overall_current_balance() / (self.initial_overall_balance + 1e-7)
+        balance_features = [usd_state, btc_state]
         return np.array(np.concatenate([window_features, balance_features]), dtype=np.float32).flatten()
 
     def _make_action_line(self) -> list[go.Scatter]:
