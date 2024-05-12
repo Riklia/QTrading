@@ -8,7 +8,7 @@ class QNetwork(nn.Module):
     def __init__(self, observation_shape: ObservationShape, n_actions):
         super(QNetwork, self).__init__()
         self.observation_shape = observation_shape
-        self.hidden_size = observation_shape.window_size * 16
+        self.hidden_size = observation_shape.window_size * 4
         self.linear_balances1 = nn.Linear(observation_shape.n_balances, 16)
         self.linear_balances2 = nn.Linear(self.linear_balances1.out_features, 32)
         self.lstm = nn.LSTM(input_size=observation_shape.window_size,

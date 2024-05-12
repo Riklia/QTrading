@@ -36,16 +36,17 @@ class Agent(BaseAgent):
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
 
-        state_action_values = self.policy_net(state_batch)
         # action_probs = nn.functional.softmax(state_action_values, dim=1)
         # entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-9), dim=-1).mean()
 
-        state_action_values = state_action_values.gather(1, action_batch)
-        next_state_values = torch.zeros(batch_size, device=self.device)
+        state_action_values = self.policy_net(state_batch).gather(1, action_batch)
 
+        next_state_values = torch.zeros(batch_size, device=self.device)
         with torch.no_grad():
-            out = self.target_net(non_final_next_states)
-            next_state_values[non_final_mask] = out.max(1).values
+            best_next_actions = self.policy_net(non_final_next_states).max(1, keepdim=True)[1]
+            next_state_values[non_final_mask] = self.target_net(non_final_next_states).gather(1,
+                                                                                              best_next_actions).squeeze()
+
         expected_state_action_values = (next_state_values * gamma) + reward_batch
 
         criterion = nn.MSELoss()
