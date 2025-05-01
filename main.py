@@ -8,39 +8,34 @@ from src import train_utils
 
 def run_single_episode(configs: QTradingConfigurations, env: CryptoTradingEnvironment, agent: BaseAgent, render: bool = False):
     state, info = env.reset()
-    state = torch.tensor(state, device=agent.device).unsqueeze(0)
+    state = state.unsqueeze(0)
     while True:
         action = agent.select_action(state)
         observation, reward, terminated, truncated, _ = env.step(action.item())
         done = terminated or truncated
         if render:
-            env.render(configs.model_dir)
+            env.render()
 
-        state = None if terminated else torch.tensor(observation, device=agent.device).unsqueeze(0)
+        state = None if terminated else observation.unsqueeze(0)
         if done:
             break
 
-    return env.get_overall_current_balance() - env.initial_overall_balance
+    return reward
 
 
 def main():
     with open(r"configurations/config.json") as f:
         config_data = json.load(f)
     configs = QTradingConfigurations(**config_data)
-    balance_log_path = None
-    if configs.env_parameters.record_balance:
-        balance_log_path = f"{configs.model_dir}/balance_log.txt"
 
-    initial_balance = Balance(balance_log_path)
-    initial_balance.update_balance("USD", configs.env_parameters.initial_usd_balance)
-    initial_balance.update_balance("BTC", configs.env_parameters.initial_btc_balance)
-    env = CryptoTradingEnvironment(initial_balance, configs.env_parameters)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    env = CryptoTradingEnvironment(configs.env_parameters, device, configs.model_dir)
     n_actions = env.action_space.n
     if configs.mode == "use":
-        agent = LoadedAgent(env.observation_shape, n_actions, configs)
+        agent = LoadedAgent(env.observation_shape, n_actions, configs, device)
         run_single_episode(configs, env, agent, render=True)
     else:
-        agent = Agent(env.observation_shape, n_actions, configs)
+        agent = Agent(env.observation_shape, n_actions, configs, device)
         train_utils.train(configs, agent, env)
 
 

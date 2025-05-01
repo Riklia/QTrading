@@ -4,17 +4,25 @@ from enum import Enum
 
 class MainActionTypes(Enum):
     HOLD = 1
-    SELL = 2
-    BUY = 3
+    LONG = 2
+    SHORT = 3
 
     @staticmethod
     def percentage_to_type(val: float):
         if val > 0:
-            return MainActionTypes.SELL
+            return MainActionTypes.LONG
         elif val < 0:
-            return MainActionTypes.BUY
+            return MainActionTypes.SHORT
         else:
             return MainActionTypes.HOLD
+
+    def get_action_value(self) -> int:
+        if self.value == MainActionTypes.HOLD:
+            return 0
+        elif self.value == MainActionTypes.LONG:
+            return 1
+        else:
+            return -1
 
 
 class RangeSpace(gym.spaces.Discrete):

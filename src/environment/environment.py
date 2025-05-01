@@ -1,121 +1,137 @@
-import gymnasium as gym
+import gym
 import numpy as np
 import pandas as pd
-import copy
+import torch
 import plotly.graph_objs as go
 import plotly.offline as pyo
 from sklearn.preprocessing import MinMaxScaler
 from collections import namedtuple
-from src.environment.balance import Balance
 from src.environment.env_parameters import EnvParameters
 from src.environment.action import RangeSpace, MainActionTypes
 
 
 YEAR = 365
-ObservationShape = namedtuple('ObservationShape', ('n_classes', 'n_window_features', 'window_size', 'n_balances'))
+ObservationShape = namedtuple('ObservationShape', ('n_classes', 'n_window_features', 'window_size', 'n_linear_features'))
 
 
 class CryptoTradingEnvironment(gym.Env):
-    # now CryptoTradingEnvironment works only with USD and BTC. Doubt that it will be extended to use other currency,
-    # but if so, the only problem is to establish the form of the input data_for_test (which now is csv with btc prices).
-    # The input data_for_test in multi currencies case should map every other currency to one main currency.
-    # However, for multi currencies case the action space must also be changed, as the agent must decide what to
-    # sell and what to buy (even if there will be only one purpose currency, i.e. BTC, the agent decides what to sell).
-
     # If the environment will be developed to handle the multi currency case, the self.price attribute must be
     # modified to represent rates of different currencies in different time points, also some functions which
     # work with Balance must be modified. For example, _get_overall_current_balance must use corresponding prices
-    def __init__(self, initial_balance: Balance, configs: EnvParameters):
+    def __init__(self, configs: EnvParameters, device, render_directory):
         super(CryptoTradingEnvironment, self).__init__()
         self.window = configs.window
         # date processing
         data = pd.read_csv(configs.data_path)
-        data = data[(configs.start_time <= data['date']) & (data['date'] <= configs.end_time)]
-        data['date'] = pd.to_datetime(data['date'], unit="s")
-        data.sort_values(by='date', inplace=True)
-        self.dates = data['date'].reset_index(drop=True)
+        data = data[(configs.start_time <= data["date"]) & (data["date"] <= configs.end_time)]
+        data["date"] = pd.to_datetime(data["date"], unit="s")
+        data.sort_values(by="date", inplace=True)
+        self.dates = data["date"].reset_index(drop=True)
         self.date_unit_in_seconds = (self.dates.iloc[1] - self.dates.iloc[0]).total_seconds()
         self.max_time_point = len(self.dates) - 1
         # initial point is window size, not 0
         self.time_point = self.window
+        # device for tensors
+        self.device = device
         # features
-        self.prices = data["close_default"].reset_index(drop=True)
-        self.volume_default = data["volume_default"].reset_index(drop=True)
-        self.spread = data["spread"].reset_index(drop=True)
-        self.funding = data["funding"].reset_index(drop=True)
-        # 2 classes: 4 window features and 3 balance features
+        self.prices = torch.tensor(data["close_default"].reset_index(drop=True).values, dtype=torch.float32, device=device)
+        self.volume_default = torch.tensor(data["volume_default"].reset_index(drop=True).values, dtype=torch.float32, device=device)
+        self.spread = torch.tensor(data["spread"].reset_index(drop=True).values, dtype=torch.float32, device=device)
+        self.funding = torch.tensor(data["funding"].reset_index(drop=True).values, dtype=torch.float32, device=device)
+        # 2 classes: 4 window features and 2 linear features
         self.observation_shape = ObservationShape(2, 4, self.window, 2)
-
-        self.initial_balance = initial_balance
-
-        self.current_balance = copy.deepcopy(initial_balance)
-        self.initial_overall_balance = self.get_overall_current_balance()
-
+        # transaction fee is used when transition from one state to another
         self.transaction_fee = configs.transaction_fee
-        # action < 0 => buy, action > 0 => sell, action = 0 => hold
-        # set step (0, 1) if you want to be able to sell/buy using some percentage of current balance
-        self.action_space = RangeSpace(-1, 1, configs.action_step_size)
+        self.current_position = MainActionTypes.HOLD
+        # action < 0 => short, action > 0 => long, action = 0 => hold
+        # set step (0, 1) if you want to be able to take long/short position using some percentage of current balance.
+        self.action_space = RangeSpace(-1, 1, 1)
         # action_history used for render
         self.action_history = []
-        self.terminate_threshold = configs.terminate_threshold
+        self.prices_numpy = self.prices.cpu().numpy()
+        self.last_transition_price = self.prices[self.time_point]
+        self._feature_cache = {
+            'prices': {},
+            'funding': {},
+            'volume': {},
+            'spread': {}
+        }
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         # Reset the environment to its initial state
-        self.current_balance = copy.deepcopy(self.initial_balance)
+        # self.time_point = np.random.randint(self.window, self.max_time_point - self.window * 2)
         self.time_point = self.window
         self.action_history = []
+        self.current_position = MainActionTypes.HOLD
         return self._get_observation(), {}
 
-    def step(self, action: int):
-        percentage = self.action_space.range_value(action)
-        action_type = MainActionTypes.percentage_to_type(percentage)
-        if action_type == MainActionTypes.SELL:
-            if self.current_balance["BTC"] < 1e-5:
-                action_type = MainActionTypes.HOLD
-            else:
-                self._sell(abs(percentage))
-        elif action_type == MainActionTypes.BUY:
-            if self.current_balance["USD"] < 1e-5:
-                action_type = MainActionTypes.HOLD
-            else:
-                self._buy(abs(percentage))
-        self.action_history.append(action_type)
-
-        terminated = (self.get_overall_current_balance() < self.terminate_threshold * self.initial_overall_balance)
+    def infeasible_step(self):
+        self.action_history.append(self.current_position)
+        terminated = False
         truncated = (self.time_point >= self.max_time_point - 1)
-
-        overall_reward = (self.get_overall_current_balance() - self.initial_overall_balance) / self.initial_overall_balance
-        hold_penalty = 0.11 * self.action_history.count(MainActionTypes.HOLD) / ((YEAR * 24 * 3600) / self.date_unit_in_seconds)
-        # reward function
-        reward = overall_reward - 0*terminated - hold_penalty
+        reward = -1
         if not truncated and not terminated:
             self.time_point += 1
+            scale = abs(self.prices[self.time_point] / self.prices[self.time_point - 1] - 1)
+            reward *= scale * 100
+        return self._get_observation(), reward, terminated, truncated, {}
+
+    def step(self, action: int):
+        action_value = self.action_space.range_value(action)
+        action_type = MainActionTypes.percentage_to_type(action_value)
+
+        # if not self._check_action_feasible(action_type):
+        #     return self.infeasible_step()
+
+        self.action_history.append(action_type)
+
+        if action_type == MainActionTypes.LONG:
+            transition = self._take_long()
+        elif action_type == MainActionTypes.SHORT:
+            transition = self._take_short()
+        else:
+            transition = self._take_hold()
+
+        if transition:
+            self.last_transition_price = self.prices[self.time_point]
+
+        terminated = False
+        truncated = (self.time_point >= self.max_time_point - 1)
+
+        reward = torch.tensor(0.0, device=self.device)
+        if not truncated and not terminated:
+            self.time_point += 1
+            reward = action_value * (self.prices[self.time_point] / self.prices[self.time_point - 1] - 1)
+        reward -= self._calculate_transition_penalty(transition, reward)
+        reward *= 100
 
         return self._get_observation(), reward, terminated, truncated, {}
 
-    def _sell(self, sell_percentage: float):
-        btc_price = self.get_current_price()
-        if 0 <= sell_percentage <= 1:
-            # to avoid restricting agent in actions, we include transaction fee in sell percentage and this way
-            # always sure that we have enough money for the transaction
-            btc_to_subtract = sell_percentage * self.current_balance["BTC"]
-            btc_no_fee = btc_to_subtract - btc_to_subtract * self.transaction_fee
-            sell_proceeds_usd = btc_no_fee * btc_price
-            trading_fees_usd = self.transaction_fee * sell_proceeds_usd
-            self.current_balance.update_balance("USD", sell_proceeds_usd - trading_fees_usd)
-            self.current_balance.update_balance("BTC", -btc_to_subtract)
+    def _take_long(self) -> bool:
+        transition = self.current_position != MainActionTypes.LONG
+        self.current_position = MainActionTypes.LONG
+        return transition
 
-    def _buy(self, buy_percentage: float):
-        btc_price = self.get_current_price()
-        if 0 <= buy_percentage <= 1:
-            # to avoid restricting agent in actions, we include transaction fee in buy percentage and this way
-            # always sure that we have enough money for the transaction
-            usd_to_subtract = buy_percentage * self.current_balance["USD"]
-            usd_no_fee = usd_to_subtract - usd_to_subtract * self.transaction_fee
-            buy_proceeds_btc = usd_no_fee / btc_price
-            trading_fees_btc = self.transaction_fee * buy_proceeds_btc
-            self.current_balance.update_balance("BTC", buy_proceeds_btc - trading_fees_btc)
-            self.current_balance.update_balance("USD", -usd_to_subtract)
+    def _take_short(self) -> bool:
+        transition = self.current_position != MainActionTypes.SHORT
+        self.current_position = MainActionTypes.SHORT
+        return transition
+
+    def _take_hold(self) -> bool:
+        transition = self.current_position != MainActionTypes.HOLD
+        self.current_position = MainActionTypes.HOLD
+        return transition
+
+    def _calculate_transition_penalty(self, transition: bool, reward: float) -> float:
+        if not transition:
+            return 0
+        return self.transaction_fee * abs(reward)
+
+    def _check_action_feasible(self, action: MainActionTypes) -> bool:
+        if action == MainActionTypes.LONG or action == MainActionTypes.SHORT:
+            if self.current_position != MainActionTypes.HOLD:
+                return False
+        return True
 
     def get_current_price(self):
         # again: if decide extend to multiple currency - add corresponding logic
@@ -124,104 +140,205 @@ class CryptoTradingEnvironment(gym.Env):
     def get_current_timestamp(self):
         return self.dates[self.time_point]
 
-    def get_overall_current_balance(self):
-        price = self.get_current_price()
-        return self.current_balance["USD"] + self.current_balance["BTC"] * price
-
-    def _get_window_feature(self, feature_array):
-        # + 1 because we include current state
-        # todo: do we know all features at the moment of making the decision?
-        #  if not, rewrite state to [window_features, balances, current price] and don't forget about normalizing
+    def _get_window_feature(self, feature_tensor: torch.Tensor) -> torch.Tensor:
         start = self.time_point - self.window + 1
         stop = self.time_point + 1
 
-        result = []
         if start < 0:
-            result.extend([0] * abs(start))
-            start = 0
+            padding = abs(start)
+            padded = torch.cat([torch.zeros(padding, dtype=feature_tensor.dtype), feature_tensor[0:stop]])
+            return padded
+        else:
+            return feature_tensor[start:stop]
 
-        result.extend(feature_array[start:stop])
-        return result
+    def _get_observation(self) -> torch.Tensor:
+        def cached_processed(feature_name, feature_data):
+            index = self.time_point
+            cache = self._feature_cache[feature_name]
+            if index not in cache:
+                cache[index] = self._get_normalized_feature(self._get_window_feature(feature_data))
+            return cache[index]
 
-    def _get_observation(self) -> np.array:
-        prices_in_window = self._get_normalized_feature(self._get_window_feature(self.prices))
-        funding_in_window = self._get_window_feature(self.funding)
-        volume_in_window = self._get_normalized_feature(self._get_window_feature(self.volume_default))
-        spread_in_window = self._get_window_feature(self.spread)
-        window_features = np.concatenate([prices_in_window, funding_in_window, volume_in_window, spread_in_window])
-        usd_state = self.current_balance["USD"] / (self.initial_overall_balance + 1e-7)
-        btc_state = self.current_balance["BTC"] * self.prices[self.time_point] / (self.initial_overall_balance + 1e-7)
-        # overall_balance_state is usd_state + btc_state, we don't need it anymore
-        # overall_balance_state = self.get_overall_current_balance() / (self.initial_overall_balance + 1e-7)
-        balance_features = [usd_state, btc_state]
-        return np.array(np.concatenate([window_features, balance_features]), dtype=np.float32).flatten()
+        prices_in_window = cached_processed('prices', self.prices)
+        funding_in_window = cached_processed('funding', self.funding)
+        volume_in_window = cached_processed('volume', self.volume_default)
+        spread_in_window = cached_processed('spread', self.spread)
 
-    def _make_action_line(self) -> list[go.Scatter]:
-        x_coordinates = []
-        y_coordinates = []
-        marker_colors = []
+        window_features = torch.cat([prices_in_window, funding_in_window, volume_in_window, spread_in_window])
+        linear_features = torch.tensor([
+            self.last_transition_price / self.prices[self.time_point],
+            self.current_position.get_action_value()
+        ], dtype=torch.float32, device=self.device)
+        
+        return torch.cat([window_features, linear_features])
+
+    def _make_state_spans(self) -> list:
+        """
+        Create spans for LONG and SHORT states over time on the plot, handling transitions properly.
+        """
+        state_spans = []
+        start_idx = None
+        current_state = None
 
         for i, action in enumerate(self.action_history):
             idx = self.window + i
-            if action == MainActionTypes.SELL:
-                x_coordinates.append(self.dates[idx])
-                y_coordinates.append(self.prices[idx])
-                marker_colors.append('red')
-            elif action == MainActionTypes.BUY:
-                x_coordinates.append(self.dates[idx])
-                y_coordinates.append(self.prices[idx])
-                marker_colors.append('green')
 
-        scatter_traces = []
-        for x, y, color in zip(x_coordinates, y_coordinates, marker_colors):
-            scatter_traces.append(go.Scatter(x=[x], y=[y], mode='markers',
-                                             marker=dict(color=color, size=10,
-                                                         symbol='triangle-down' if color == 'red' else 'triangle-up'),
-                                             showlegend=False))
+            if action in [MainActionTypes.LONG, MainActionTypes.SHORT]:
+                if start_idx is None:
+                    # Start a new span if no span is active
+                    start_idx = idx
+                    current_state = action
+                elif current_state != action:
+                    # End the current span if the state changes (e.g., LONG → SHORT)
+                    state_spans.append(
+                        dict(
+                            type="rect",
+                            xref="x", yref="paper",
+                            x0=self.dates[start_idx], x1=self.dates[idx],
+                            y0=0, y1=1,
+                            fillcolor="green" if current_state == MainActionTypes.LONG else "red",
+                            opacity=0.2,
+                            layer="below",
+                            line_width=0
+                        )
+                    )
+                    # Start a new span for the new state
+                    start_idx = idx
+                    current_state = action
+            else:
+                # End the span if we encounter HOLD or an invalid state
+                if start_idx is not None:
+                    state_spans.append(
+                        dict(
+                            type="rect",
+                            xref="x", yref="paper",
+                            x0=self.dates[start_idx], x1=self.dates[idx],
+                            y0=0, y1=1,
+                            fillcolor="green" if current_state == MainActionTypes.LONG else "red",
+                            opacity=0.2,
+                            layer="below",
+                            line_width=0
+                        )
+                    )
+                    start_idx = None
+                    current_state = None
 
-        return scatter_traces
+        # Handle an ongoing state until the end of the timeline
+        if start_idx is not None:
+            state_spans.append(
+                dict(
+                    type="rect",
+                    xref="x", yref="paper",
+                    x0=self.dates[start_idx], x1=self.dates[self.time_point],
+                    y0=0, y1=1,
+                    fillcolor="green" if current_state == MainActionTypes.LONG else "red",
+                    opacity=0.2,
+                    layer="below",
+                    line_width=0
+                )
+            )
 
-    def render(self, directory):
-        trace_btc_price = go.Scatter(x=self.dates[:self.time_point+1], y=self.prices[:self.time_point+1],
-                                     mode='lines',
-                                     name='BTC Price')
+        return state_spans
 
-        layout = go.Layout(title='Crypto Trading Environment', xaxis=dict(title='Time'),
-                           yaxis=dict(title='Price (USD)'), margin=dict(r=200),
-                           legend=dict(x=0.01, y=0.98))
+    def _make_state_transition_lines(self) -> list:
+        transition_lines = []
+
+        for i, action in enumerate(self.action_history):
+            idx = self.window + i
+            if i > 0 and self.action_history[i] != self.action_history[i - 1]:
+                transition_lines.append(
+                    dict(
+                        type="line",
+                        xref="x", yref="y",
+                        x0=self.dates[idx], x1=self.dates[idx],
+                        y0=min(self.prices_numpy),
+                        y1=max(self.prices_numpy),
+                        line=dict(color="blue", width=1, dash="dash")
+                    )
+                )
+        return transition_lines
+
+    def _make_action_line(self) -> list[go.Scatter]:
+        long_x_coordinates = []
+        long_y_coordinates = []
+        short_x_coordinates = []
+        short_y_coordinates = []
+        hold_x_coordinates = []
+        hold_y_coordinates = []
+
+        for i, action in enumerate(self.action_history):
+            idx = self.window + i
+            if i == 0 or action != self.action_history[i - 1]:
+                if action == MainActionTypes.LONG:
+                    long_x_coordinates.append(self.dates[idx])
+                    long_y_coordinates.append(self.prices_numpy[idx])
+                elif action == MainActionTypes.SHORT:
+                    short_x_coordinates.append(self.dates[idx])
+                    short_y_coordinates.append(self.prices_numpy[idx])
+                else:
+                    hold_x_coordinates.append(self.dates[idx])
+                    hold_y_coordinates.append(self.prices_numpy[idx])
+
+        return [
+            go.Scatter(
+                x=long_x_coordinates,
+                y=long_y_coordinates,
+                mode='markers',
+                marker=dict(size=10, color='green'),
+                name='LONG Transitions'
+            ),
+            go.Scatter(
+                x=short_x_coordinates,
+                y=short_y_coordinates,
+                mode='markers',
+                marker=dict(size=10, color='red'),
+                name='SHORT Transitions'
+            ),
+            go.Scatter(
+                x=hold_x_coordinates,
+                y=hold_y_coordinates,
+                mode='markers',
+                marker=dict(size=10, color='yellow'),
+                name='HOLD Transitions'
+            )
+        ]
+
+    def render(self):
+        trace_btc_price = go.Scatter(
+            x=self.dates[:self.time_point + 1],
+            y=self.prices_numpy[:self.time_point + 1],
+            mode='lines',
+            name='BTC Price'
+        )
+
+        layout = go.Layout(
+            title='Crypto Trading Environment',
+            xaxis=dict(title='Time'),
+            yaxis=dict(title='Price (USD)'),
+            margin=dict(r=200),
+            legend=dict(x=0.01, y=0.98),
+            shapes=self._make_state_spans(),
+        )
 
         data_to_plot = [trace_btc_price]
         if self.time_point + 1 < len(self.dates):
-            trace_current_time = go.Scatter(x=[self.dates[self.time_point+1]], y=[self.prices[self.time_point+1]],
-                                            mode='markers', name='Current Time Point', marker=dict(color='red', size=10))
-
-            data_to_plot += [trace_current_time]
+            trace_current_time = go.Scatter(
+                x=[self.dates[self.time_point + 1]],
+                y=[self.prices_numpy[self.time_point + 1]],
+                mode='markers',
+                name='Current Time Point',
+                marker=dict(color='red', size=10)
+            )
+            data_to_plot.append(trace_current_time)
 
         data_to_plot += self._make_action_line()
 
         fig = go.Figure(data=data_to_plot, layout=layout)
-        annotation_text = str(self.current_balance).replace("\n", "<br>")
-        annotation_text += f"==========<br>Balance in USD:<br>{self.get_overall_current_balance():.2f}"
-        fig.add_annotation(dict(x=1.02, y=max(self.prices[:self.time_point+1]),
-                                text=annotation_text,
-                                showarrow=False,
-                                font=dict(color='green'),
-                                xanchor='left',
-                                xref="paper",
-                                yref="y",
-                                align="left"
-                                ))
-        pyo.plot(fig, filename=f"{directory}/crypto_trading_environment.html", auto_open=False,
-                 include_plotlyjs='cdn')
+        pyo.plot(fig, filename=f"{directory}/crypto_trading_environment.html", auto_open=False, include_plotlyjs='cdn')
 
     @staticmethod
-    def _minmax_scale_feature(input_feature: pd.Series):
-        scaler = MinMaxScaler()
-        return pd.Series(scaler.fit_transform(input_feature.values.reshape(-1, 1)).flatten())
-
-    @staticmethod
-    def _get_normalized_feature(feature_array):
-        return np.array(feature_array) / feature_array[-1]
+    def _get_normalized_feature(feature_tensor: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        return feature_tensor / (feature_tensor.mean() + eps)
 
     @staticmethod
     def _exponential_moving_average(prices, period, weighting_factor=0.2):

@@ -3,23 +3,25 @@ import torch
 from src.environment import CryptoTradingEnvironment
 from src.agent import Agent
 from src.train_config import QTradingConfigurations
-
+import time
 
 def run_training_episode(configs: QTradingConfigurations, env: CryptoTradingEnvironment, agent: Agent, render: bool = False, update_target_every=100):
     state, info = env.reset()
-    state = torch.tensor(state, device=agent.device).unsqueeze(0)
+    state = state.unsqueeze(0)
     tau = configs.learning_parameters.tau
+    cumulative_reward = 0
     step_count = 0
 
     while True:
         action = agent.select_action(state)
         observation, reward, terminated, truncated, _ = env.step(action.item())
-        reward = torch.tensor([reward], device=agent.device)
+        cumulative_reward += reward
+        reward = reward.unsqueeze(0)
         done = terminated or truncated
         if render:
-            env.render(configs.model_dir)
+            env.render()
 
-        next_state = None if terminated else torch.tensor(observation, device=agent.device).unsqueeze(0)
+        next_state = None if terminated else observation.unsqueeze(0)
         agent.replay_memory.push(state, action, next_state, reward)
         state = next_state
         agent.learn()
@@ -34,26 +36,26 @@ def run_training_episode(configs: QTradingConfigurations, env: CryptoTradingEnvi
         step_count += 1
 
         if done:
-            agent.episode_usd_final_balance.append(env.get_overall_current_balance())
-            agent.plot_durations()
-            agent.episode_rewards.append(reward)
-            agent.plot_durations(array_to_plot=agent.episode_rewards, plot_name="training_rewards.png", y_label="Final reward")
+            agent.episode_rewards.append(cumulative_reward)
+            agent.plot_durations(array_to_plot=agent.episode_rewards, plot_name="training_rewards.png", y_label="Final reward", save_model=True)
             break
 
-    return env.get_overall_current_balance() - env.initial_overall_balance
+    return cumulative_reward
 
 
 def train(configs: QTradingConfigurations, agent, env):
     plt.ion()
     num_episodes = configs.learning_parameters.num_episodes
     print_frequency = configs.learning_parameters.print_frequency
+    t1 = time.time()
     for i_episode in range(num_episodes):
         episode_profit = run_training_episode(configs, env, agent, render=configs.learning_parameters.render)
         if i_episode % print_frequency == 0 and i_episode > 0:
-            print(f"Episode: {i_episode:5}  Profit: {episode_profit:5}")
+            print(f"Episode: {i_episode:5}  Cumulative reward: {episode_profit:5}")
+    print(f"Time {time.time() - t1}s")
 
     print("Complete")
-    agent.plot_durations(show_result=True)
+    agent.plot_durations(agent.episode_rewards, show_result=True)
     env.render(configs.model_dir)
     plt.ioff()
     plt.show()

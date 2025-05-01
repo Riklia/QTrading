@@ -6,8 +6,9 @@ from src.environment import ObservationShape
 
 
 class BaseAgent:
-    def __init__(self, observation_shape: ObservationShape, n_actions: int, configs: QTradingConfigurations):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def __init__(self, observation_shape: ObservationShape, n_actions: int, configs: QTradingConfigurations, device: torch.device):
+        self.device = device
+        print(f"Using {self.device} device")
         self.policy_net = QNetwork(observation_shape, n_actions).to(self.device)
         self.target_net = QNetwork(observation_shape, n_actions).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
